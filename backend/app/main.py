@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.v1.routers import aois
+from app.api.routes import aoi
 
 app = FastAPI(
     title="SAR + MS Tarımsal Hasar Analizi API",
@@ -17,7 +17,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(aois.router, prefix="/api/v1")
+app.include_router(aoi.router, prefix="/api/v1/aoi", tags=["aoi"])
 
 @app.get("/health")
 async def health_check():
