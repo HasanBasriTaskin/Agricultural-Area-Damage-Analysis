@@ -14,7 +14,7 @@ import speckle_filter as sf
 import terrain_flattening as trf
 import helper
 
-ee.Initialize()
+# ee.Initialize()  # Removed because authentication is handled by gee_client.py
 
 
 ###########################################

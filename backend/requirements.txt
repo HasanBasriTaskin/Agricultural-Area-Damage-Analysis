@@ -18,3 +18,5 @@ earthengine-api>=0.1.385
 
 earthengine-api>=1.7.39
 google-auth>=2.22.0
+
+shapely>=2.0.1
