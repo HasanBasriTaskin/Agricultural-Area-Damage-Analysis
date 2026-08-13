@@ -7,7 +7,7 @@ from app.infrastructure.db.database import AsyncSessionLocal
 from app.infrastructure.repositories.sql_repositories import SQLAnalysisJobRepository
 from app.infrastructure.external.gee_client import GEESatelliteClient
 from app.application.pipelines.sar_pipeline import SarPipelineService
-from app.domain.entities.analysis_job import JobStatus
+from app.infrastructure.db.models import JobStatusEnum
 from app.infrastructure.db.models import AOI as ModelAOI
 from sqlalchemy import select
 from shapely import wkb
@@ -66,7 +66,7 @@ async def _run_sar_pipeline_async(job_id: uuid.UUID) -> str:
             return minio_key
             
         except Exception as e:
-            await repo.update(job_id, {"status": "failed"})
+            await repo.update(job_id, {"status": "failed", "error_message": str(e)})
             raise e
 
 

@@ -10,6 +10,7 @@ export default function HomePage() {
   const [isSaving, setIsSaving] = useState(false);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Leaflet needs 'window' — load only on client
   const MapComponent = useMemo(
@@ -72,6 +73,7 @@ export default function HomePage() {
       
       setActiveJobId(jobData.id);
       setJobStatus(jobData.status);
+      setErrorMessage(null);
       toast.info("Analiz sıraya alındı.");
 
     } catch (error: any) {
@@ -97,6 +99,7 @@ export default function HomePage() {
           if (data.status === "done") {
             toast.success("Analiz tamamlandı!");
           } else if (data.status === "failed") {
+            setErrorMessage(data.error_message);
             toast.error("Analiz başarısız oldu.");
           }
         }
@@ -176,7 +179,7 @@ export default function HomePage() {
                 <div className="mt-6 p-4 rounded-lg bg-zinc-950 border border-zinc-800">
                   <h3 className="text-sm font-medium text-zinc-400 mb-2">İşlem Durumu</h3>
                   <div className="flex items-center justify-between">
-                    <span className="text-sm font-bold text-white uppercase tracking-wider">
+                    <span className={`text-sm font-bold uppercase tracking-wider ${jobStatus === 'failed' ? 'text-red-500' : 'text-white'}`}>
                       {jobStatus || "BİLİNMİYOR"}
                     </span>
                     {jobStatus !== "done" && jobStatus !== "failed" && (
@@ -189,6 +192,13 @@ export default function HomePage() {
                   <p className="text-xs text-zinc-500 mt-2 truncate" title={activeJobId}>
                     ID: {activeJobId}
                   </p>
+                  {jobStatus === 'failed' && errorMessage && (
+                    <div className="mt-3 p-3 bg-red-950/30 border border-red-900/50 rounded-md">
+                      <p className="text-xs text-red-400 break-words font-mono">
+                        {errorMessage}
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

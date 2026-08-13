@@ -34,6 +34,7 @@ class AnalysisJobEntity(BaseEntity):
     status: JobStatusEnum = JobStatusEnum.QUEUED
     event_date: datetime
     weights: Optional[Dict[str, Any]] = None
+    error_message: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

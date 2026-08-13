@@ -31,6 +31,7 @@ class JobResponse(BaseModel):
     aoi_id: uuid.UUID
     created_by: uuid.UUID
     status: JobStatusEnum
+    error_message: Optional[str] = None
     event_date: datetime
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
