@@ -1,12 +1,15 @@
 "use client"
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import { toast } from 'sonner';
 
 export default function HomePage() {
   const [wkt, setWkt] = useState<string | null>(null);
   const [aoiName, setAoiName] = useState("");
+  const [eventDate, setEventDate] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [jobStatus, setJobStatus] = useState<string | null>(null);
 
   // Leaflet needs 'window' — load only on client
   const MapComponent = useMemo(
@@ -34,34 +37,43 @@ export default function HomePage() {
       toast.error("Lütfen AOI için bir isim girin.");
       return;
     }
+    if (!eventDate) {
+      toast.error("Lütfen olay tarihini girin.");
+      return;
+    }
 
     setIsSaving(true);
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      const response = await fetch(`${apiUrl}/api/v1/aoi/`, {
+      
+      // 1. Create AOI
+      const aoiResponse = await fetch(`${apiUrl}/api/v1/aoi/`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: aoiName, geometry: wkt })
+      });
+
+      if (!aoiResponse.ok) throw new Error("AOI kaydı başarısız.");
+      const aoiData = await aoiResponse.json();
+      toast.success("AOI kaydedildi, Analiz başlatılıyor...");
+
+      // 2. Create Job
+      const jobResponse = await fetch(`${apiUrl}/api/v1/jobs/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: aoiName,
-          geometry: wkt
+          aoi_id: aoiData.id,
+          event_date: new Date(eventDate).toISOString(),
         })
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Kayıt işlemi başarısız oldu.");
-      }
-
-      const data = await response.json();
-      toast.success("AOI başarıyla kaydedildi! ID: " + data.id);
-      console.log("Saved AOI:", data);
+      if (!jobResponse.ok) throw new Error("Analiz işi başlatılamadı.");
+      const jobData = await jobResponse.json();
       
-      // Reset form
-      setAoiName("");
-      // Ideally we should also clear the drawn polygon on the map here, 
-      // but for MVP this is enough.
+      setActiveJobId(jobData.id);
+      setJobStatus(jobData.status);
+      toast.info("Analiz sıraya alındı.");
+
     } catch (error: any) {
       toast.error(error.message);
       console.error(error);
@@ -69,6 +81,32 @@ export default function HomePage() {
       setIsSaving(false);
     }
   };
+
+  // Poll for job status
+  useEffect(() => {
+    if (!activeJobId) return;
+    if (jobStatus === "done" || jobStatus === "failed") return;
+
+    const interval = setInterval(async () => {
+      try {
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+        const res = await fetch(`${apiUrl}/api/v1/jobs/${activeJobId}`);
+        if (res.ok) {
+          const data = await res.json();
+          setJobStatus(data.status);
+          if (data.status === "done") {
+            toast.success("Analiz tamamlandı!");
+          } else if (data.status === "failed") {
+            toast.error("Analiz başarısız oldu.");
+          }
+        }
+      } catch (e) {
+        console.error("Failed to fetch job status", e);
+      }
+    }, 5000); // Poll every 5 seconds
+
+    return () => clearInterval(interval);
+  }, [activeJobId, jobStatus]);
 
   return (
     <main className="min-h-screen bg-background text-foreground p-8 flex flex-col">
@@ -89,8 +127,8 @@ export default function HomePage() {
           {/* Sidebar / Form */}
           <div className="w-full md:w-96 flex flex-col gap-4 bg-zinc-900/50 p-6 rounded-xl border border-zinc-800">
             <div>
-              <h2 className="text-2xl font-semibold tracking-tight">Yeni AOI Oluştur</h2>
-              <p className="text-sm text-muted-foreground mt-1">Harita üzerinden analiz edilecek tarlayı çokgen aracı ile çizin.</p>
+              <h2 className="text-2xl font-semibold tracking-tight">Yeni Analiz Başlat</h2>
+              <p className="text-sm text-muted-foreground mt-1">Harita üzerinden tarlayı çizin ve tarihi seçin.</p>
             </div>
             
             <div className="space-y-4 mt-4">
@@ -106,6 +144,17 @@ export default function HomePage() {
               </div>
 
               <div className="space-y-2">
+                <label className="text-sm font-medium">Olay Tarihi (Afet)</label>
+                <input 
+                  type="date" 
+                  value={eventDate}
+                  onChange={(e) => setEventDate(e.target.value)}
+                  className="flex h-10 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  style={{ colorScheme: 'dark' }}
+                />
+              </div>
+
+              <div className="space-y-2">
                 <label className="text-sm font-medium">Seçili Alan (WKT)</label>
                 <textarea 
                   readOnly 
@@ -116,11 +165,32 @@ export default function HomePage() {
 
               <button 
                 onClick={handleSave}
-                disabled={isSaving || !wkt}
+                disabled={isSaving || !wkt || activeJobId !== null}
                 className="w-full h-10 inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:pointer-events-none"
               >
-                {isSaving ? "Kaydediliyor..." : "Tarlayı Kaydet"}
+                {isSaving ? "İşleniyor..." : "Analizi Başlat"}
               </button>
+
+              {/* Status Tracking */}
+              {activeJobId && (
+                <div className="mt-6 p-4 rounded-lg bg-zinc-950 border border-zinc-800">
+                  <h3 className="text-sm font-medium text-zinc-400 mb-2">İşlem Durumu</h3>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-bold text-white uppercase tracking-wider">
+                      {jobStatus || "BİLİNMİYOR"}
+                    </span>
+                    {jobStatus !== "done" && jobStatus !== "failed" && (
+                      <span className="flex h-3 w-3">
+                        <span className="animate-ping absolute inline-flex h-3 w-3 rounded-full bg-blue-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-3 w-3 bg-blue-500"></span>
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-zinc-500 mt-2 truncate" title={activeJobId}>
+                    ID: {activeJobId}
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         </section>
