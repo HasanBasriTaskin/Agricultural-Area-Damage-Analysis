@@ -1,4 +1,8 @@
-version: "3.8"
+name: damage-analysis
+
+networks:
+  frontend-net:
+  backend-net:
 
 services:
   api:
@@ -11,88 +15,156 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      - postgres
-      - redis
-      - minio
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    env_file: .env
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/damage_analysis
-      - REDIS_URL=redis://redis:6379/0
-      - MINIO_ENDPOINT=minio:9000
-      - MINIO_ACCESS_KEY=minioadmin
-      - MINIO_SECRET_KEY=minioadmin
+      - WATCHFILES_FORCE_POLLING=true
+    restart: unless-stopped
+    networks: [frontend-net, backend-net]
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   worker:
     build:
       context: ./backend
-      dockerfile: Dockerfile.worker
+      dockerfile: Dockerfile
     command: celery -A app.infrastructure.tasks worker -l info
     volumes:
       - ./backend:/app
     depends_on:
-      - postgres
-      - redis
-      - minio
-    environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/damage_analysis
-      - REDIS_URL=redis://redis:6379/0
-      - MINIO_ENDPOINT=minio:9000
-      - MINIO_ACCESS_KEY=minioadmin
-      - MINIO_SECRET_KEY=minioadmin
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    env_file: .env
+    restart: unless-stopped
+    networks: [backend-net]
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   worker-beat:
     build:
       context: ./backend
-      dockerfile: Dockerfile.worker
+      dockerfile: Dockerfile
     command: celery -A app.infrastructure.tasks beat -l info
     volumes:
       - ./backend:/app
     depends_on:
-      - redis
-    environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/damage_analysis
-      - REDIS_URL=redis://redis:6379/0
-      - MINIO_ENDPOINT=minio:9000
-      - MINIO_ACCESS_KEY=minioadmin
-      - MINIO_SECRET_KEY=minioadmin
+      redis:
+        condition: service_healthy
+    env_file: .env
+    restart: unless-stopped
+    networks: [backend-net]
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   redis:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks: [backend-net]
 
   postgres:
     image: postgis/postgis:16-3.4
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: damage_analysis
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks: [backend-net]
+
+  pgadmin:
+    image: dpage/pgadmin4:8
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "8081:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [backend-net]
 
   minio:
     image: minio/minio
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
     ports:
       - "9000:9000"
       - "9001:9001"
     volumes:
       - minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks: [backend-net]
 
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dev
     ports:
       - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - WATCHPACK_POLLING=true
+      - CHOKIDAR_USEPOLLING=true
     depends_on:
-      - api
+      api:
+        condition: service_started
+    restart: unless-stopped
+    networks: [frontend-net]
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   pgdata:
