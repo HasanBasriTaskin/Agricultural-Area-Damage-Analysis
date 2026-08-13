@@ -25,8 +25,10 @@ AsyncSessionLocal = async_sessionmaker(
     autoflush=False
 )
 
-# Declarative base for SQLAlchemy models
-Base = declarative_base()
+from sqlalchemy.orm import DeclarativeBase
+
+class Base(DeclarativeBase):
+    pass
 
 # Dependency for FastAPI
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
