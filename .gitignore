@@ -8,6 +8,7 @@ frontend/.env*.local
 # Backend
 backend/venv/
 backend/env/
+backend/secrets/
 backend/__pycache__/
 backend/.pytest_cache/
 backend/alembic.ini.bak

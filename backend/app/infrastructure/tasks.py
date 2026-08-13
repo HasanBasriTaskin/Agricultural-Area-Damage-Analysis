@@ -1,13 +1,15 @@
 import uuid
 from typing import Any
 import os
+import asyncio
 from celery import Celery
-from app.infrastructure.db.database import SessionLocal
-from app.infrastructure.repositories.job_repository import SQLJobRepository
+from app.infrastructure.db.database import AsyncSessionLocal
+from app.infrastructure.repositories.sql_repositories import SQLAnalysisJobRepository
 from app.infrastructure.external.gee_client import GEESatelliteClient
 from app.application.pipelines.sar_pipeline import SarPipelineService
 from app.domain.entities.analysis_job import JobStatus
 from app.infrastructure.db.models import AOI as ModelAOI
+from sqlalchemy import select
 from shapely import wkb
 
 redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
@@ -26,23 +28,23 @@ celery_app.conf.update(
     enable_utc=True,
 )
 
-@celery_app.task(bind=True, name="app.infrastructure.tasks.run_sar_pipeline")
-def run_sar_pipeline(self, job_id_str: str) -> dict[str, Any]:
-    job_id = uuid.UUID(job_id_str)
-    
-    with SessionLocal() as db:
-        repo = SQLJobRepository(db)
+async def _run_sar_pipeline_async(job_id: uuid.UUID) -> str:
+    async with AsyncSessionLocal() as db:
+        repo = SQLAnalysisJobRepository(db)
         
         # 1. Update status to PROCESSING_SAR
-        repo.update_status(job_id, JobStatus.PROCESSING_SAR)
+        await repo.update(job_id, {"status": "processing_sar"})
         
         try:
             # 2. Get Job and AOI
-            job = repo.get_by_id(job_id)
+            job = await repo.get_by_id(job_id)
             if not job:
                 raise ValueError(f"Job {job_id} not found")
                 
-            model_aoi = db.query(ModelAOI).filter(ModelAOI.id == job.aoi_id).first()
+            stmt = select(ModelAOI).where(ModelAOI.id == job.aoi_id)
+            result = await db.execute(stmt)
+            model_aoi = result.scalar_one_or_none()
+            
             if not model_aoi:
                 raise ValueError(f"AOI {job.aoi_id} not found")
                 
@@ -50,16 +52,30 @@ def run_sar_pipeline(self, job_id_str: str) -> dict[str, Any]:
             geom = wkb.loads(bytes(model_aoi.geometry.data))
             aoi_wkt = geom.wkt
             
-            # 3. Run Pipeline
+            # 3. Run Pipeline (Sync call)
+            # Since pipeline.run_pipeline is sync, we can just call it, 
+            # or ideally run it in a threadpool if it blocks too much. 
+            # For MVP, it's fine.
             client = GEESatelliteClient()
             pipeline = SarPipelineService(client)
             minio_key = pipeline.run_pipeline(aoi_wkt, job.event_date)
             
             # 4. Update status to DONE
-            repo.update_status(job_id, JobStatus.DONE)
+            await repo.update(job_id, {"status": "done"})
             
-            return {"job_id": job_id_str, "status": "DONE", "result_key": minio_key}
+            return minio_key
             
         except Exception as e:
-            repo.update_status(job_id, JobStatus.FAILED)
+            await repo.update(job_id, {"status": "failed"})
             raise e
+
+
+@celery_app.task(bind=True, name="app.infrastructure.tasks.run_sar_pipeline")
+def run_sar_pipeline(self, job_id_str: str) -> dict[str, Any]:
+    job_id = uuid.UUID(job_id_str)
+    
+    # Run the async pipeline function in a new event loop
+    loop = asyncio.get_event_loop()
+    minio_key = loop.run_until_complete(_run_sar_pipeline_async(job_id))
+    
+    return {"job_id": job_id_str, "status": "DONE", "result_key": minio_key}

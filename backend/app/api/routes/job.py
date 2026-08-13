@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 import uuid
 
 from app.api.schemas import JobCreate, JobResponse
 from app.infrastructure.db.database import get_db
-from app.infrastructure.repositories.job_repository import SQLJobRepository
+from app.infrastructure.repositories.sql_repositories import SQLAnalysisJobRepository
 from app.application.use_cases.job_use_cases import CreateJobUseCase
 from app.infrastructure.tasks import run_sar_pipeline
 
@@ -13,19 +13,19 @@ DEMO_USER_ID = uuid.UUID("c2cb63b8-acc5-4384-a09b-47b81de325e6")
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
-def get_job_repo(db: Session = Depends(get_db)) -> SQLJobRepository:
-    return SQLJobRepository(db)
+def get_job_repo(db: AsyncSession = Depends(get_db)) -> SQLAnalysisJobRepository:
+    return SQLAnalysisJobRepository(db)
 
-def get_create_job_use_case(repo: SQLJobRepository = Depends(get_job_repo)) -> CreateJobUseCase:
+def get_create_job_use_case(repo: SQLAnalysisJobRepository = Depends(get_job_repo)) -> CreateJobUseCase:
     return CreateJobUseCase(repo)
 
 @router.post("/", response_model=JobResponse, status_code=status.HTTP_201_CREATED)
-def create_job(
+async def create_job(
     job_in: JobCreate,
     use_case: CreateJobUseCase = Depends(get_create_job_use_case)
 ):
     try:
-        job = use_case.execute(
+        job = await use_case.execute(
             aoi_id=job_in.aoi_id,
             event_date=job_in.event_date,
             created_by=DEMO_USER_ID,
@@ -41,9 +41,9 @@ def create_job(
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
-@router.get('/{job_id}', response_model=JobResponse)
-def get_job(job_id: uuid.UUID, repo: SQLJobRepository = Depends(get_job_repo)):
-    job = repo.get_by_id(job_id)
+@router.get("/{job_id}", response_model=JobResponse)
+async def get_job(job_id: uuid.UUID, repo: SQLAnalysisJobRepository = Depends(get_job_repo)):
+    job = await repo.get_by_id(job_id)
     if not job:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Job not found')
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
     return job

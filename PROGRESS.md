@@ -24,14 +24,14 @@
 
 ## SPRINT 2 — SAR PIPELINE (Celery + GEE)
 - [x] S2-T1: AnalysisJob domain entity + WeightConfig value object
-- [ ] S2-T2: IJobRepository arayüzü
-- [ ] S2-T3: JobRepository implementasyonu
-- [ ] S2-T4: Job API
-- [ ] S2-T5: Satellite data client arayüzü + GEE implementasyonu
-- [ ] S2-T6: Celery altyapi kurulumu
-- [ ] S2-T7: SAR pipeline servisi
-- [ ] S2-T8: Celery task + job tetikleme
-- [ ] S2-T9: Job durumu izleme endpoint'i
-- [ ] S2-T10: Frontend — job tetikleme + durum gösterimi (MVP)
+- [x] S2-T2: IJobRepository arayüzü
+- [x] S2-T3: JobRepository implementasyonu
+- [x] S2-T4: Job API
+- [x] S2-T5: Satellite data client arayüzü + GEE implementasyonu
+- [x] S2-T6: Celery altyapi kurulumu
+- [x] S2-T7: SAR pipeline servisi
+- [x] S2-T8: Celery task + job tetikleme
+- [x] S2-T9: Job durumu izleme endpoint'i
+- [x] S2-T10: Frontend — job tetikleme + durum gösterimi (MVP)
 
 > **MIMARI KARAR (DPSVI vs DPSVIm):** DPSVI yerine DPSVIm kullanildi — orijinal DPSVI'nin VVmax parametresi manuel/ampirik tuning gerektirdigi için otomatik pipeline'a uygun degildi.
