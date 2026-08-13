@@ -1,11 +1,19 @@
 import ee
 import json
+import os
+import sys
 from datetime import datetime, timedelta
 from typing import Any
 from shapely.geometry.base import BaseGeometry
 from shapely import wkt
 from google.oauth2 import service_account
 from app.domain.interfaces.satellite_data_client import ISatelliteDataClient
+
+# Add gee_s1_ard to sys.path so its internal imports work
+gee_s1_ard_path = os.path.join(os.path.dirname(__file__), 'gee_s1_ard')
+if gee_s1_ard_path not in sys.path:
+    sys.path.insert(0, gee_s1_ard_path)
+
 from app.infrastructure.external.gee_s1_ard import wrapper
 
 class GEESatelliteClient(ISatelliteDataClient):
@@ -46,17 +54,24 @@ class GEESatelliteClient(ISatelliteDataClient):
             'DEM': ee.Image('USGS/SRTMGL1_003'),
             'TERRAIN_FLATTENING_MODEL': 'VOLUME',
             'TERRAIN_FLATTENING_ADDITIONAL_LAYERS': ['layover', 'shadow'],
+            'TERRAIN_FLATTENING_ADDITIONAL_LAYOVER_SHADOW_BUFFER': 0,
             'FORMAT': 'LINEAR', # CRITICAL: MUST BE LINEAR FOR DPSVIm
             'CLIP_TO_ROI': True,
-            'SAVE_ASSETS': False
+            'SAVE_ASSET': False,
+            'ASSET_ID': None
         }
         
         # This wrapper returns an ee.ImageCollection
         s1_processed = wrapper.s1_preproc(parameter)
         
+        # Validate that we actually found images
+        count = s1_processed.size().getInfo()
+        if count == 0:
+            raise ValueError(f"No Sentinel-1 images found in this area between {start_date.strftime('%Y-%m-%d')} and {end_date.strftime('%Y-%m-%d')}.")
+        
         # We mosaic or return the first image
         # Given we want the nearest pass, let's just mosaic
-        image = s1_processed[0].mosaic().clip(parameter['ROI'])
+        image = s1_processed.mosaic().clip(parameter['ROI'])
         return image
 
     def download_image(self, image: Any, aoi_wkt: str, scale: int, prefix: str) -> str:
