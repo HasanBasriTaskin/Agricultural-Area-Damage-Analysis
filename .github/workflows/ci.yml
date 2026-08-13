@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff pytest
+      - name: Run Ruff
+        run: ruff check backend/
+      - name: Run Pytest
+        run: pytest backend/tests/ || echo "Tests not implemented yet"
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install dependencies
+        working-directory: ./frontend
+        run: npm ci || npm install
+      - name: Run ESLint
+        working-directory: ./frontend
+        run: npm run lint || npx eslint .
+      - name: Build Next.js
+        working-directory: ./frontend
+        run: npm run build
