@@ -1,12 +1,25 @@
 "use client"
-import React, { useState } from 'react';
-import MapComponent from '@/components/Map';
+import React, { useState, useMemo } from 'react';
+import dynamic from 'next/dynamic';
 import { toast } from 'sonner';
 
 export default function HomePage() {
   const [wkt, setWkt] = useState<string | null>(null);
   const [aoiName, setAoiName] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+
+  // Leaflet needs 'window' — load only on client
+  const MapComponent = useMemo(
+    () => dynamic(() => import('@/components/Map'), {
+      ssr: false,
+      loading: () => (
+        <div className="w-full h-full rounded-xl bg-zinc-900 flex items-center justify-center text-zinc-500">
+          Harita yükleniyor...
+        </div>
+      ),
+    }),
+    []
+  );
 
   const handlePolygonChange = (newWkt: string | null) => {
     setWkt(newWkt);
