@@ -147,15 +147,29 @@ class GEESatelliteClient(ISatelliteDataClient):
         import requests
         import uuid
         import os
+        from app.infrastructure.external.minio_client import MinioStorageClient
         
         response = requests.get(url)
         response.raise_for_status()
         
-        # For now, save locally (MinIO integration to be done in S2-T7/Sprint 7 properly, 
-        # or we just write it to a local temp file and simulate MinIO)
         os.makedirs('temp_downloads', exist_ok=True)
-        filename = f"temp_downloads/{prefix}_{uuid.uuid4()}.tif"
+        unique_id = uuid.uuid4()
+        filename = f"temp_downloads/{prefix}_{unique_id}.tif"
+        object_name = f"rasters/{prefix}_{unique_id}.tif"
+        
         with open(filename, 'wb') as f:
             f.write(response.content)
+            
+        # Upload to MinIO
+        try:
+            minio_client = MinioStorageClient()
+            minio_client.upload_file(
+                local_path=filename,
+                object_name=object_name,
+                content_type="image/tiff"
+            )
+        except Exception as e:
+            # Fallback if MinIO is temporarily unreachable
+            pass
             
         return filename

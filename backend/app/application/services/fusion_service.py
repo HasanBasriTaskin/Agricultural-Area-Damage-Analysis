@@ -94,7 +94,20 @@ class FusionService:
             dst.write(classes_array.astype(rasterio.float32), 2) # classes as float32 to match meta dtype
             dst.set_band_description(2, 'Damage_Class')
             
+        object_name = f"fusion/fusion_result_{job_id}.tif"
+        try:
+            from app.infrastructure.external.minio_client import MinioStorageClient
+            minio_client = MinioStorageClient()
+            minio_client.upload_file(
+                local_path=fusion_tif_path,
+                object_name=object_name,
+                content_type="image/tiff"
+            )
+        except Exception:
+            pass
+
         return {
             "fusion_tif_path": fusion_tif_path,
+            "minio_key": object_name,
             "mean_score": float(np.nanmean(score_array))
         }
