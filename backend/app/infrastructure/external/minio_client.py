@@ -85,3 +85,9 @@ class MinioStorageClient:
             object_name=object_name,
             expires=timedelta(seconds=expires_seconds)
         )
+
+    def get_object(self, object_name: str):
+        """
+        Retrieves raw stream for an object from MinIO.
+        """
+        return self.client.get_object(self.bucket_name, object_name)
