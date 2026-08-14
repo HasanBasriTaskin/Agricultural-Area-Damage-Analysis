@@ -13,12 +13,51 @@ from reportlab.platypus import (
 )
 from reportlab.graphics.shapes import Drawing, String, Rect
 from reportlab.graphics.charts.piecharts import Pie
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfbase.pdfmetrics import registerFontFamily
 
 from app.infrastructure.external.minio_client import MinioStorageClient
+
+# Ensure UTF-8 Turkish TTF Font registration
+_FONTS_REGISTERED = False
+
+def _register_turkish_fonts():
+    global _FONTS_REGISTERED
+    if _FONTS_REGISTERED:
+        return
+
+    # Check font directories
+    possible_dirs = [
+        os.path.join(os.path.dirname(__file__), "..", "..", "static", "fonts"),
+        os.path.abspath("app/static/fonts"),
+        "/app/app/static/fonts"
+    ]
+
+    regular_path = None
+    bold_path = None
+
+    for d in possible_dirs:
+        r_p = os.path.join(d, "Roboto-Regular.ttf")
+        b_p = os.path.join(d, "Roboto-Bold.ttf")
+        if os.path.exists(r_p) and os.path.exists(b_p):
+            regular_path = r_p
+            bold_path = b_p
+            break
+
+    if regular_path and bold_path:
+        try:
+            pdfmetrics.registerFont(TTFont('Roboto', regular_path))
+            pdfmetrics.registerFont(TTFont('Roboto-Bold', bold_path))
+            registerFontFamily('Roboto', normal='Roboto', bold='Roboto-Bold', italic='Roboto', boldItalic='Roboto-Bold')
+            _FONTS_REGISTERED = True
+        except Exception:
+            pass
 
 class PdfReportService:
     def __init__(self, minio_client: Optional[MinioStorageClient] = None):
         self.minio_client = minio_client or MinioStorageClient()
+        _register_turkish_fonts()
 
     def generate_damage_report(
         self,
@@ -31,8 +70,13 @@ class PdfReportService:
         weights: Optional[Dict[str, float]] = None
     ) -> bytes:
         """
-        Generates a formal, beautiful, multi-section A4 PDF Damage Assessment Report.
+        Generates a formal, beautiful, multi-section A4 PDF Damage Assessment Report with full UTF-8 Turkish font support.
         """
+        _register_turkish_fonts()
+
+        font_norm = 'Roboto' if _FONTS_REGISTERED else 'Helvetica'
+        font_bold = 'Roboto-Bold' if _FONTS_REGISTERED else 'Helvetica-Bold'
+
         buffer = io.BytesIO()
         doc = SimpleDocTemplate(
             buffer,
@@ -45,13 +89,13 @@ class PdfReportService:
 
         styles = getSampleStyleSheet()
 
-        # Custom Styles
+        # Custom Styles with Turkish Font
         title_style = ParagraphStyle(
             'ReportTitle',
             parent=styles['Normal'],
-            fontName='Helvetica-Bold',
-            fontSize=16,
-            leading=20,
+            fontName=font_bold,
+            fontSize=15,
+            leading=19,
             textColor=colors.HexColor('#0f172a'),
             alignment=1 # Center
         )
@@ -59,7 +103,7 @@ class PdfReportService:
         subtitle_style = ParagraphStyle(
             'ReportSubtitle',
             parent=styles['Normal'],
-            fontName='Helvetica',
+            fontName=font_norm,
             fontSize=9,
             leading=12,
             textColor=colors.HexColor('#475569'),
@@ -69,7 +113,7 @@ class PdfReportService:
         section_heading = ParagraphStyle(
             'SectionHeading',
             parent=styles['Normal'],
-            fontName='Helvetica-Bold',
+            fontName=font_bold,
             fontSize=11,
             leading=15,
             textColor=colors.HexColor('#0f766e'),
@@ -80,8 +124,8 @@ class PdfReportService:
         body_style = ParagraphStyle(
             'ReportBody',
             parent=styles['Normal'],
-            fontName='Helvetica',
-            fontSize=9,
+            fontName=font_norm,
+            fontSize=8.5,
             leading=12,
             textColor=colors.HexColor('#1e293b')
         )
@@ -127,7 +171,7 @@ class PdfReportService:
             ('BACKGROUND', (0,0), (0,-1), colors.HexColor('#f1f5f9')),
             ('BACKGROUND', (2,0), (2,-1), colors.HexColor('#f1f5f9')),
             ('TEXTCOLOR', (0,0), (-1,-1), colors.HexColor('#0f172a')),
-            ('FONTNAME', (0,0), (-1,-1), 'Helvetica'),
+            ('FONTNAME', (0,0), (-1,-1), font_norm),
             ('FONTSIZE', (0,0), (-1,-1), 8.5),
             ('BOTTOMPADDING', (0,0), (-1,-1), 5),
             ('TOPPADDING', (0,0), (-1,-1), 5),
@@ -155,7 +199,8 @@ class PdfReportService:
         weather_table.setStyle(TableStyle([
             ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#0f766e')),
             ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('FONTNAME', (0,0), (-1,0), font_bold),
+            ('FONTNAME', (0,1), (-1,-1), font_norm),
             ('FONTSIZE', (0,0), (-1,-1), 8.5),
             ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
             ('PADDING', (0,0), (-1,-1), 5),
@@ -182,7 +227,8 @@ class PdfReportService:
         dist_table.setStyle(TableStyle([
             ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#334155')),
             ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('FONTNAME', (0,0), (-1,0), font_bold),
+            ('FONTNAME', (0,1), (-1,-1), font_norm),
             ('FONTSIZE', (0,0), (-1,-1), 8.5),
             ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
             ('PADDING', (0,0), (-1,-1), 4),
@@ -238,7 +284,8 @@ class PdfReportService:
         hs_table.setStyle(TableStyle([
             ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#0f766e')),
             ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('FONTNAME', (0,0), (-1,0), font_bold),
+            ('FONTNAME', (0,1), (-1,-1), font_norm),
             ('FONTSIZE', (0,0), (-1,-1), 8.5),
             ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
             ('PADDING', (0,0), (-1,-1), 5),
