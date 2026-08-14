@@ -6,7 +6,8 @@ from app.api.schemas import JobCreate, JobResponse
 from app.infrastructure.db.database import get_db
 from app.infrastructure.repositories.sql_repositories import SQLAnalysisJobRepository
 from app.application.use_cases.job_use_cases import CreateJobUseCase
-from app.infrastructure.tasks import run_sar_pipeline
+from celery import chord
+from app.infrastructure.tasks import run_sar_pipeline, run_ms_pipeline, finalize_pipeline
 
 # For now, simulate authenticated user ID
 DEMO_USER_ID = uuid.UUID("c2cb63b8-acc5-4384-a09b-47b81de325e6")
@@ -32,8 +33,12 @@ async def create_job(
             weights_dict=job_in.weights
         )
         
-        # Trigger Celery Task
-        run_sar_pipeline.delay(str(job.id))
+        job_id_str = str(job.id)
+        
+        # Trigger Celery Task (Chord: parallel SAR and MS, then finalize)
+        chord(
+            [run_sar_pipeline.s(job_id_str), run_ms_pipeline.s(job_id_str)]
+        )(finalize_pipeline.s(job_id_str))
         
         return job
     except ValueError as e:

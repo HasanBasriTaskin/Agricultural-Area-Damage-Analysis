@@ -1,5 +1,5 @@
 import uuid
-from typing import Any
+from typing import Any, Optional
 import os
 import asyncio
 import logging
@@ -47,19 +47,25 @@ def _make_session_factory():
 
 
 async def _update_job_status(
-    session_factory, job_id: uuid.UUID, status: str, error_message: str = None
+    session_factory, job_id: uuid.UUID, status: Optional[str] = None, error_message: str = None, **kwargs
 ):
-    """Directly update job status using a simple UPDATE."""
+    """Directly update job status and other fields using a simple UPDATE."""
     from app.infrastructure.db.models import AnalysisJob
 
     async with session_factory() as db:
-        values = {"status": status}
+        values = {}
+        if status is not None:
+            values["status"] = status
         if error_message is not None:
             values["error_message"] = error_message
-        stmt = sa_update(AnalysisJob).where(AnalysisJob.id == job_id).values(**values)
-        await db.execute(stmt)
-        await db.commit()
-        logger.info(f"Job {job_id} status updated to {status}")
+        
+        values.update(kwargs)
+        
+        if values:
+            stmt = sa_update(AnalysisJob).where(AnalysisJob.id == job_id).values(**values)
+            await db.execute(stmt)
+            await db.commit()
+            logger.info(f"Job {job_id} updated: {values}")
 
 
 async def _run_sar_pipeline_async(job_id: uuid.UUID) -> str:
@@ -69,8 +75,8 @@ async def _run_sar_pipeline_async(job_id: uuid.UUID) -> str:
     session_factory, engine = _make_session_factory()
 
     try:
-        # 1. Update status to PROCESSING_SAR
-        await _update_job_status(session_factory, job_id, "processing_sar")
+        # We set sar_status to 'processing'
+        await _update_job_status(session_factory, job_id, sar_status="processing")
 
         # 2. Get Job and AOI data
         async with session_factory() as db:
@@ -99,15 +105,15 @@ async def _run_sar_pipeline_async(job_id: uuid.UUID) -> str:
         pipeline = SarPipelineService(client)
         minio_key = pipeline.run_pipeline(aoi_wkt, event_date)
 
-        # 4. Update status to DONE
-        await _update_job_status(session_factory, job_id, "done")
+        # 4. Update sar_status to done
+        await _update_job_status(session_factory, job_id, sar_status="done")
 
         return minio_key
 
     except Exception as e:
         logger.error(f"Pipeline failed for job {job_id}: {e}", exc_info=True)
         try:
-            await _update_job_status(session_factory, job_id, "failed", str(e)[:500])
+            await _update_job_status(session_factory, job_id, status="failed", sar_status="failed", error_message=str(e)[:500])
         except Exception as update_err:
             logger.error(f"Failed to update job status to failed: {update_err}")
         raise
@@ -123,12 +129,96 @@ def run_sar_pipeline(self, job_id_str: str) -> dict[str, Any]:
     asyncio.set_event_loop(loop)
     try:
         minio_key = loop.run_until_complete(_run_sar_pipeline_async(job_id))
-        return {"job_id": job_id_str, "status": "DONE", "result_key": minio_key}
+        return {"job_id": job_id_str, "status": "DONE", "result_key": minio_key, "pipeline": "SAR"}
     except Exception as e:
-        logger.error(
-            f"Celery task run_sar_pipeline failed for {job_id_str}: {e}",
-            exc_info=True,
-        )
-        return {"job_id": job_id_str, "status": "FAILED", "error": str(e)[:500]}
+        logger.error(f"Celery task run_sar_pipeline failed for {job_id_str}: {e}", exc_info=True)
+        return {"job_id": job_id_str, "status": "FAILED", "error": str(e)[:500], "pipeline": "SAR"}
+    finally:
+        loop.close()
+
+
+async def _run_ms_pipeline_async(job_id: uuid.UUID) -> str:
+    from app.infrastructure.db.models import AnalysisJob, AOI as ModelAOI
+    from app.application.pipelines.ms_pipeline import MsPipelineService
+
+    session_factory, engine = _make_session_factory()
+    try:
+        await _update_job_status(session_factory, job_id, ms_status="processing")
+
+        async with session_factory() as db:
+            stmt = select(AnalysisJob).where(AnalysisJob.id == job_id)
+            result = await db.execute(stmt)
+            db_job = result.scalar_one_or_none()
+
+            if not db_job:
+                raise ValueError(f"Job {job_id} not found")
+
+            aoi_id = db_job.aoi_id
+            event_date = db_job.event_date
+
+            stmt2 = select(ModelAOI).where(ModelAOI.id == aoi_id)
+            result2 = await db.execute(stmt2)
+            model_aoi = result2.scalar_one_or_none()
+            if not model_aoi:
+                raise ValueError(f"AOI {aoi_id} not found")
+
+            geom = wkb.loads(bytes(model_aoi.geometry.data))
+            aoi_wkt = geom.wkt
+
+        client = GEESatelliteClient()
+        pipeline = MsPipelineService(client)
+        minio_key = pipeline.run_pipeline(aoi_wkt, event_date)
+        
+        # Update ms_status to done
+        await _update_job_status(session_factory, job_id, ms_status="done")
+        
+        return minio_key
+    except Exception as e:
+        logger.error(f"MS Pipeline failed for job {job_id}: {e}", exc_info=True)
+        try:
+            await _update_job_status(session_factory, job_id, status="failed", ms_status="failed", error_message=str(e)[:500])
+        except Exception as update_err:
+            pass
+        raise
+    finally:
+        await engine.dispose()
+
+
+@celery_app.task(bind=True, name="app.infrastructure.tasks.run_ms_pipeline")
+def run_ms_pipeline(self, job_id_str: str) -> dict[str, Any]:
+    job_id = uuid.UUID(job_id_str)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        minio_key = loop.run_until_complete(_run_ms_pipeline_async(job_id))
+        return {"job_id": job_id_str, "status": "DONE", "result_key": minio_key, "pipeline": "MS"}
+    except Exception as e:
+        logger.error(f"Celery task run_ms_pipeline failed for {job_id_str}: {e}", exc_info=True)
+        return {"job_id": job_id_str, "status": "FAILED", "error": str(e)[:500], "pipeline": "MS"}
+    finally:
+        loop.close()
+
+
+async def _finalize_job_async(job_id: uuid.UUID, results: list) -> None:
+    session_factory, engine = _make_session_factory()
+    try:
+        # Check if any failed
+        failed = [r for r in results if r.get("status") == "FAILED"]
+        if failed:
+            await _update_job_status(session_factory, job_id, status="failed", error_message="One or more pipelines failed.")
+        else:
+            await _update_job_status(session_factory, job_id, status="done")
+    finally:
+        await engine.dispose()
+
+
+@celery_app.task(bind=True, name="app.infrastructure.tasks.finalize_pipeline")
+def finalize_pipeline(self, results: list, job_id_str: str) -> dict[str, Any]:
+    job_id = uuid.UUID(job_id_str)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(_finalize_job_async(job_id, results))
+        return {"job_id": job_id_str, "status": "COMPLETED_ALL", "results": results}
     finally:
         loop.close()
