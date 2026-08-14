@@ -3,6 +3,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import { toast } from 'sonner';
 import ExportModal from '@/components/ExportModal';
+import TimeSeriesChart from '@/components/TimeSeriesChart';
 
 // Helper: single pipeline status row
 function statusColor(status: string | null) {
@@ -549,6 +550,13 @@ export default function HomePage() {
             </div>
           </div>
         </section>
+
+        {/* Sprint 8: 30-Day Meteorological Time Series Chart */}
+        {activeJobId && summaryData && (
+          <div className="pt-2">
+            <TimeSeriesChart jobId={activeJobId} />
+          </div>
+        )}
       </div>
 
       {/* Sprint 7: Export & Reporting Modal */}
