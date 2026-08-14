@@ -109,7 +109,13 @@ async def _run_sar_pipeline_async(job_id: uuid.UUID) -> str:
         pipeline = SarPipelineService(client)
         minio_key = pipeline.run_pipeline(aoi_wkt, event_date)
 
-        # 4. Update sar_status to done
+        # 4. Record OutputArtifact in DB
+        from app.infrastructure.db.models import OutputArtifact
+        async with session_factory() as db:
+            db.add(OutputArtifact(job_id=job_id, file_type="SAR_TIFF", minio_key=minio_key))
+            await db.commit()
+
+        # 5. Update sar_status to done
         await _update_job_status(session_factory, job_id, sar_status="done")
 
         return minio_key
@@ -173,6 +179,12 @@ async def _run_ms_pipeline_async(job_id: uuid.UUID) -> str:
         pipeline = MsPipelineService(client)
         minio_key = pipeline.run_pipeline(aoi_wkt, event_date)
         
+        # Record OutputArtifact in DB
+        from app.infrastructure.db.models import OutputArtifact
+        async with session_factory() as db:
+            db.add(OutputArtifact(job_id=job_id, file_type="MS_TIFF", minio_key=minio_key))
+            await db.commit()
+
         # Update ms_status to done
         await _update_job_status(session_factory, job_id, ms_status="done")
         
@@ -339,9 +351,18 @@ async def _finalize_job_async(job_id: uuid.UUID, results: list) -> None:
         
         from geoalchemy2.shape import to_shape
         from geoalchemy2.elements import WKTElement
-        from app.infrastructure.db.models import AOI, GridCell, HotspotResult
+        from app.infrastructure.db.models import AOI, GridCell, HotspotResult, OutputArtifact
         from app.application.services.grid_aggregation_service import GridAggregationService
         from app.application.services.hotspot_service import HotspotService
+
+        # Record Fusion OutputArtifact in DB
+        async with session_factory() as db:
+            db.add(OutputArtifact(
+                job_id=job_id,
+                file_type="FUSION_TIFF",
+                minio_key=fusion_result.get("minio_key", fusion_result.get("fusion_tif_path"))
+            ))
+            await db.commit()
         
         # Fetch AOI WKT
         async with session_factory() as db:

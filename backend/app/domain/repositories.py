@@ -59,3 +59,25 @@ class AnalysisJobRepository(ABC):
     @abstractmethod
     async def update(self, job_id: uuid.UUID, data: dict) -> AnalysisJobEntity:
         pass
+
+
+class GridCellRepository(ABC):
+    @abstractmethod
+    async def list_by_job(self, job_id: uuid.UUID) -> List[Any]:
+        pass
+
+
+class HotspotRepository(ABC):
+    @abstractmethod
+    async def list_by_job(self, job_id: uuid.UUID) -> List[Any]:
+        pass
+
+
+class OutputArtifactRepository(ABC):
+    @abstractmethod
+    async def list_by_job(self, job_id: uuid.UUID) -> List[Any]:
+        pass
+
+    @abstractmethod
+    async def get_by_job_and_type(self, job_id: uuid.UUID, file_type: str) -> Optional[Any]:
+        pass

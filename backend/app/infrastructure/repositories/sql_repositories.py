@@ -5,8 +5,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from geoalchemy2.shape import to_shape
 from geoalchemy2.elements import WKBElement
 
-from app.domain.entities import UserEntity, AOIEntity, AnalysisJobEntity
-from app.domain.repositories import UserRepository, AOIRepository, AnalysisJobRepository
+from app.domain.repositories import (
+    UserRepository, AOIRepository, AnalysisJobRepository,
+    GridCellRepository, HotspotRepository, OutputArtifactRepository
+)
 from app.infrastructure.db import models
 
 def _geom_to_wkt(geom) -> Optional[str]:
@@ -132,3 +134,41 @@ class SQLAnalysisJobRepository(AnalysisJobRepository):
         db_job = result.scalar_one()
         await self.session.flush()
         return AnalysisJobEntity.model_validate(db_job)
+
+
+class SQLGridCellRepository(GridCellRepository):
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def list_by_job(self, job_id: uuid.UUID) -> List[models.GridCell]:
+        stmt = select(models.GridCell).where(models.GridCell.job_id == job_id)
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+
+class SQLHotspotRepository(HotspotRepository):
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def list_by_job(self, job_id: uuid.UUID) -> List[models.HotspotResult]:
+        stmt = select(models.HotspotResult).where(models.HotspotResult.job_id == job_id)
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+
+class SQLOutputArtifactRepository(OutputArtifactRepository):
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def list_by_job(self, job_id: uuid.UUID) -> List[models.OutputArtifact]:
+        stmt = select(models.OutputArtifact).where(models.OutputArtifact.job_id == job_id)
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_by_job_and_type(self, job_id: uuid.UUID, file_type: str) -> Optional[models.OutputArtifact]:
+        stmt = select(models.OutputArtifact).where(
+            models.OutputArtifact.job_id == job_id,
+            models.OutputArtifact.file_type == file_type
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
