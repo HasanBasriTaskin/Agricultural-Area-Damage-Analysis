@@ -2,6 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import { toast } from 'sonner';
+import ExportModal from '@/components/ExportModal';
 
 // Helper: single pipeline status row
 function statusColor(status: string | null) {
@@ -54,6 +55,7 @@ export default function HomePage() {
   const [gridData, setGridData] = useState<any[]>([]);
   const [hotspotData, setHotspotData] = useState<any[]>([]);
   const [showGridList, setShowGridList] = useState(false);
+  const [isExportOpen, setIsExportOpen] = useState(false);
 
   const MAX_AREA_HA = 25000;
 
@@ -391,8 +393,22 @@ export default function HomePage() {
                         </div>
                       </div>
 
-                      {/* Toggle Grid Table */}
+                      {/* Export & Download Hub Button */}
                       <div className="pt-2">
+                        <button
+                          type="button"
+                          onClick={() => setIsExportOpen(true)}
+                          className="w-full py-2.5 px-4 flex items-center justify-center gap-2 text-xs font-semibold text-white bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 rounded-lg shadow-lg shadow-emerald-950/40 border border-emerald-500/30 transition-all cursor-pointer"
+                        >
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                          </svg>
+                          📥 Rapor & Çıktıları İndir (PDF, GeoTIFF, Vektör)
+                        </button>
+                      </div>
+
+                      {/* Toggle Grid Table */}
+                      <div className="pt-1">
                         <button
                           type="button"
                           onClick={() => setShowGridList(!showGridList)}
@@ -425,6 +441,15 @@ export default function HomePage() {
           </div>
         </section>
       </div>
+
+      {/* Sprint 7: Export & Reporting Modal */}
+      {activeJobId && (
+        <ExportModal
+          isOpen={isExportOpen}
+          onClose={() => setIsExportOpen(false)}
+          jobId={activeJobId}
+        />
+      )}
     </main>
   );
 }

@@ -39,7 +39,20 @@
 - REST API endpoint'leri: `GET /jobs/{id}/results/summary`, `GET /jobs/{id}/results/grid`, `GET /jobs/{id}/results/hotspots`.
 - Frontend arayuzunde ozet kartlari ve grid hucreleri listeleme tablosu (MVP).
 
+### Sprint 7: Dışa Aktarma ve Raporlama (Export & PDF Damage Report)
+- `ExportService`: GeoJSON, Shapefile (.zip), GeoPackage (.gpkg), CSV ve GeoTIFF raster indirme motoru.
+- `PdfReportService`: ReportLab ile A4 formatında onaylı, meteoroloji tablolu, renkli dinamik pasta grafikli ve ıslak imza alanlı resmi Hasar Tespit Raporu üretimi.
+- REST API Endpoint'leri:
+  - `GET /jobs/{id}/export/pdf`
+  - `GET /jobs/{id}/export/geotiff?layer=fusion|sar|ms`
+  - `GET /jobs/{id}/export/geojson`
+  - `GET /jobs/{id}/export/shapefile`
+  - `GET /jobs/{id}/export/geopackage`
+  - `GET /jobs/{id}/export/csv`
+- Frontend `ExportModal` bileşeni ve tek tıkla dosya indirme arayüzü.
+- Otomatik unit ve entegrasyon testleri (`test_sprint7.py`) ile tüm formatların byte doğrulaması.
+
 ---
 
-## Siradaki Adim
-- Sprint 7: Export ve Raporlama (GeoTIFF / GeoJSON indirme, PDF hasar raporu).
+## Sıradaki Adım
+- Sprint 8: İleri Görselleştirme & Harita Katmanları (Sentinel-2 RGB Katmanı, NDMI Nem Haritası, SAR Radar Katmanı, Afet Öncesi/Sonrası Swipe/Perde Karşılaştırma Aracı).
