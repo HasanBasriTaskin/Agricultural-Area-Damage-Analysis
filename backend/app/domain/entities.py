@@ -31,9 +31,11 @@ class AOIEntity(BaseEntity):
 class AnalysisJobEntity(BaseEntity):
     aoi_id: uuid.UUID
     created_by: uuid.UUID
-    status: JobStatusEnum = JobStatusEnum.QUEUED
+    status: str = "queued"
+    sar_status: Optional[str] = "queued"
+    ms_status: Optional[str] = "queued"
     event_date: datetime
-    weights: Optional[Dict[str, Any]] = None
+    weights: Optional[dict] = None
     error_message: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None

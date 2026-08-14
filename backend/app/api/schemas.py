@@ -31,6 +31,8 @@ class JobResponse(BaseModel):
     aoi_id: uuid.UUID
     created_by: uuid.UUID
     status: JobStatusEnum
+    sar_status: Optional[str] = "queued"
+    ms_status: Optional[str] = "queued"
     error_message: Optional[str] = None
     event_date: datetime
     created_at: Optional[datetime]

@@ -57,6 +57,8 @@ class AnalysisJob(Base):
     aoi_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("aois.id"))
     created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
     status: Mapped[JobStatusEnum] = mapped_column(Enum(JobStatusEnum), default=JobStatusEnum.QUEUED)
+    sar_status: Mapped[Optional[str]] = mapped_column(String, nullable=True, default="queued")
+    ms_status: Mapped[Optional[str]] = mapped_column(String, nullable=True, default="queued")
     event_date: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     weights: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(String, nullable=True)
