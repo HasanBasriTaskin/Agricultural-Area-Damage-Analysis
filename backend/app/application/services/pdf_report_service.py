@@ -89,7 +89,7 @@ class PdfReportService:
             x_min, y_min = _deg2num(max_lat, min_lon, zoom)
             x_max, y_max = _deg2num(min_lat, max_lon, zoom)
 
-            # Safeguard maximum tiles to 16
+            # Safeguard maximum tiles to 20
             if (x_max - x_min + 1) * (y_max - y_min + 1) > 20:
                 zoom = max(11, zoom - 2)
                 x_min, y_min = _deg2num(max_lat, min_lon, zoom)
@@ -125,7 +125,7 @@ class PdfReportService:
         hotspots: Optional[List[Any]] = None
     ) -> Optional[io.BytesIO]:
         """
-        Renders a high-resolution map snapshot with real satellite background, AOI boundary, H3 hexagons and Hotspots.
+        Renders a high-resolution map snapshot with real satellite background, un-distorted vertical geometry, AOI boundary, H3 hexagons and Hotspots.
         """
         if not cells and not aoi_wkt:
             return None
@@ -155,9 +155,16 @@ class PdfReportService:
             if min_lon > max_lon:
                 min_lon, min_lat, max_lon, max_lat = 30.91, 40.69, 30.93, 40.71
 
-            # Pad bounding box
-            pad_x = max(0.002, (max_lon - min_lon) * 0.15)
-            pad_y = max(0.002, (max_lat - min_lat) * 0.15)
+            avg_lat = (min_lat + max_lat) / 2.0
+            aspect_corr = 1.0 / math.cos(math.radians(avg_lat))
+
+            # Pad bounding box proportionally
+            pad_x = max(0.002, (max_lon - min_lon) * 0.12)
+            pad_y = max(0.002, (max_lat - min_lat) * 0.12)
+
+            d_lon = (max_lon + pad_x) - (min_lon - pad_x)
+            d_lat = (max_lat + pad_y) - (min_lat - pad_y)
+            geo_ratio = max(0.45, min(1.6, (d_lat * aspect_corr) / d_lon))
 
             # 2. Fetch Real Satellite Tiles
             stitched_img, ext = self._fetch_satellite_basemap(
@@ -168,7 +175,10 @@ class PdfReportService:
                 zoom=15
             )
 
-            fig, ax = plt.subplots(figsize=(7, 3.8), dpi=160)
+            fig_w = 6.4
+            fig_h = fig_w * geo_ratio
+            fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=160)
+            ax.set_aspect(aspect_corr)
             ax.set_facecolor('#0f172a')
             fig.patch.set_facecolor('#0f172a')
 
@@ -276,8 +286,8 @@ class PdfReportService:
             pagesize=A4,
             leftMargin=36,
             rightMargin=36,
-            topMargin=28,
-            bottomMargin=28
+            topMargin=26,
+            bottomMargin=26
         )
 
         styles = getSampleStyleSheet()
@@ -310,7 +320,7 @@ class PdfReportService:
             fontSize=10,
             leading=14,
             textColor=colors.HexColor('#0f766e'),
-            spaceBefore=6,
+            spaceBefore=5,
             spaceAfter=3
         )
 
@@ -329,8 +339,8 @@ class PdfReportService:
         story.append(Paragraph("T.C. TARIMSAL HASAR TESPİT VE DEĞERLENDİRME RAPORU", title_style))
         story.append(Spacer(1, 2))
         story.append(Paragraph("Çoklu Sensör (Sentinel-1 SAR + Sentinel-2 Optik + Meteoroloji Füzyonu) Analizi", subtitle_style))
-        story.append(Spacer(1, 6))
-        story.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor('#0f766e'), spaceBefore=2, spaceAfter=8))
+        story.append(Spacer(1, 4))
+        story.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor('#0f766e'), spaceBefore=2, spaceAfter=6))
 
         # Metadata block
         gen_date = datetime.now().strftime("%d.%m.%Y %H:%M")
@@ -349,7 +359,7 @@ class PdfReportService:
             ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
         ]))
         story.append(meta_table)
-        story.append(Spacer(1, 6))
+        story.append(Spacer(1, 5))
 
         # 2. General Info & AOI Table
         story.append(Paragraph("1. Çalışma Alanı (AOI) ve Afet Bilgileri", section_heading))
@@ -366,12 +376,12 @@ class PdfReportService:
             ('TEXTCOLOR', (0,0), (-1,-1), colors.HexColor('#0f172a')),
             ('FONTNAME', (0,0), (-1,-1), font_norm),
             ('FONTSIZE', (0,0), (-1,-1), 8),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 3.5),
-            ('TOPPADDING', (0,0), (-1,-1), 3.5),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 3),
+            ('TOPPADDING', (0,0), (-1,-1), 3),
             ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#e2e8f0')),
         ]))
         story.append(info_table)
-        story.append(Spacer(1, 6))
+        story.append(Spacer(1, 5))
 
         # 3. Weather & Meteorological Verification (Enhanced with Temperature & Humidity)
         story.append(Paragraph("2. Meteorolojik Doğrulama, Sıcaklık ve Nem Göstergeleri", section_heading))
@@ -407,19 +417,31 @@ class PdfReportService:
             ('FONTNAME', (0,1), (-1,-1), font_norm),
             ('FONTSIZE', (0,0), (-1,-1), 8),
             ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
-            ('PADDING', (0,0), (-1,-1), 3.5),
+            ('PADDING', (0,0), (-1,-1), 3),
             ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f8fafc')])
         ]))
         story.append(weather_table)
-        story.append(Spacer(1, 6))
+        story.append(Spacer(1, 5))
 
-        # 4. Real Satellite Map Visual Snapshot
+        # 4. Real Satellite Map Visual Snapshot (Aspect-Ratio Preserved)
         if cells or aoi_wkt:
             map_img_buf = self._generate_map_snapshot(cells or [], aoi_wkt, hotspots or [])
             if map_img_buf:
-                story.append(Paragraph("3. Uydu Tabanlı Mekânsal Hasar Haritası", section_heading))
-                story.append(Image(map_img_buf, width=520, height=210))
-                story.append(Spacer(1, 6))
+                try:
+                    pil_img = PILImage.open(map_img_buf)
+                    w_px, h_px = pil_img.size
+                    aspect = h_px / w_px
+                    target_w = 480
+                    target_h = target_w * aspect
+                    if target_h > 240:
+                        target_h = 240
+                        target_w = target_h / aspect
+                    map_img_buf.seek(0)
+                    story.append(Paragraph("3. Uydu Tabanlı Mekânsal Hasar Haritası", section_heading))
+                    story.append(Image(map_img_buf, width=target_w, height=target_h))
+                    story.append(Spacer(1, 5))
+                except Exception:
+                    pass
 
         # 5. Damage Distribution & Pie Chart
         story.append(Paragraph("4. Hasar Dağılımı ve Şiddet Sınıflandırması", section_heading))
@@ -443,7 +465,7 @@ class PdfReportService:
             ('FONTNAME', (0,1), (-1,-1), font_norm),
             ('FONTSIZE', (0,0), (-1,-1), 8),
             ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
-            ('PADDING', (0,0), (-1,-1), 3.5),
+            ('PADDING', (0,0), (-1,-1), 3),
             ('TEXTCOLOR', (0,1), (0,1), colors.HexColor('#16a34a')), # Green
             ('TEXTCOLOR', (0,2), (0,2), colors.HexColor('#ca8a04')), # Yellow
             ('TEXTCOLOR', (0,3), (0,3), colors.HexColor('#ea580c')), # Orange
@@ -451,12 +473,12 @@ class PdfReportService:
         ]))
 
         # Pie Chart Drawing
-        d = Drawing(100, 75)
+        d = Drawing(100, 70)
         pc = Pie()
-        pc.x = 12
-        pc.y = 5
-        pc.width = 68
-        pc.height = 68
+        pc.x = 14
+        pc.y = 4
+        pc.width = 64
+        pc.height = 64
         
         yok_v = max(0, distribution.get("Yok", 0))
         hafif_v = max(0, distribution.get("Hafif", 0))
@@ -479,7 +501,7 @@ class PdfReportService:
             ('ALIGN', (1,0), (1,0), 'CENTER'),
         ]))
         story.append(dist_and_chart)
-        story.append(Spacer(1, 6))
+        story.append(Spacer(1, 5))
 
         # 6. Hotspots & Spatial Concentration
         story.append(Paragraph("5. Mekânsal Kümelenme ve Odak Noktaları (Getis-Ord G*)", section_heading))
@@ -500,11 +522,11 @@ class PdfReportService:
             ('FONTNAME', (0,1), (-1,-1), font_norm),
             ('FONTSIZE', (0,0), (-1,-1), 8),
             ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
-            ('PADDING', (0,0), (-1,-1), 3.5),
+            ('PADDING', (0,0), (-1,-1), 3),
             ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f8fafc')])
         ]))
         story.append(hs_table)
-        story.append(Spacer(1, 6))
+        story.append(Spacer(1, 5))
 
         # 7. Methodology & Weights
         story.append(Paragraph("6. Analiz Metodolojisi ve Ağırlık Katsayıları", section_heading))
