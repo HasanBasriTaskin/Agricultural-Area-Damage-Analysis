@@ -89,8 +89,8 @@ class PdfReportService:
             x_min, y_min = _deg2num(max_lat, min_lon, zoom)
             x_max, y_max = _deg2num(min_lat, max_lon, zoom)
 
-            # Safeguard maximum tiles to 20
-            if (x_max - x_min + 1) * (y_max - y_min + 1) > 20:
+            # Safeguard maximum tiles to 24
+            if (x_max - x_min + 1) * (y_max - y_min + 1) > 24:
                 zoom = max(11, zoom - 2)
                 x_min, y_min = _deg2num(max_lat, min_lon, zoom)
                 x_max, y_max = _deg2num(min_lat, max_lon, zoom)
@@ -105,7 +105,7 @@ class PdfReportService:
                     try:
                         url = f'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{zoom}/{y}/{x}'
                         req = urllib.request.Request(url, headers=req_headers)
-                        with urllib.request.urlopen(req, timeout=3.0) as resp:
+                        with urllib.request.urlopen(req, timeout=3.5) as resp:
                             tile = PILImage.open(io.BytesIO(resp.read()))
                             stitched.paste(tile, ((x - x_min) * 256, (y - y_min) * 256))
                     except Exception:
@@ -125,13 +125,13 @@ class PdfReportService:
         hotspots: Optional[List[Any]] = None
     ) -> Optional[io.BytesIO]:
         """
-        Renders a high-resolution map snapshot with real satellite background, un-distorted vertical geometry, AOI boundary, H3 hexagons and Hotspots.
+        Renders a wide, high-resolution map snapshot with real satellite background, full AOI coverage, H3 hexagons and Hotspots.
         """
         if not cells and not aoi_wkt:
             return None
 
         try:
-            # 1. Calculate Bounds
+            # 1. Calculate Bounds dynamically from AOI or cells
             min_lon, min_lat, max_lon, max_lat = 180, 90, -180, -90
 
             if aoi_wkt:
@@ -142,7 +142,7 @@ class PdfReportService:
                 except Exception:
                     pass
 
-            if min_lon > max_lon:
+            if min_lon > max_lon and cells:
                 for c in cells:
                     geom = to_shape(c.geometry) if hasattr(c, 'geometry') else None
                     if geom:
@@ -153,31 +153,33 @@ class PdfReportService:
                         max_lat = max(max_lat, b[3])
 
             if min_lon > max_lon:
-                min_lon, min_lat, max_lon, max_lat = 30.91, 40.69, 30.93, 40.71
+                return None
 
+            # Dynamic latitude aspect ratio correction: 1 / cos(latitude)
             avg_lat = (min_lat + max_lat) / 2.0
-            aspect_corr = 1.0 / math.cos(math.radians(avg_lat))
+            aspect_corr = 1.0 / math.cos(math.radians(avg_lat)) if abs(avg_lat) < 85 else 1.0
 
-            # Pad bounding box proportionally
-            pad_x = max(0.002, (max_lon - min_lon) * 0.12)
-            pad_y = max(0.002, (max_lat - min_lat) * 0.12)
+            # Generous contextual padding around the parcel (wider landscape context)
+            span_x = max_lon - min_lon
+            span_y = max_lat - min_lat
+            pad_x = max(0.003, span_x * 0.45)
+            pad_y = max(0.003, span_y * 0.45)
 
-            d_lon = (max_lon + pad_x) - (min_lon - pad_x)
-            d_lat = (max_lat + pad_y) - (min_lat - pad_y)
-            geo_ratio = max(0.45, min(1.6, (d_lat * aspect_corr) / d_lon))
+            view_min_lon = min_lon - pad_x
+            view_max_lon = max_lon + pad_x
+            view_min_lat = min_lat - pad_y
+            view_max_lat = max_lat + pad_y
 
-            # 2. Fetch Real Satellite Tiles
+            # 2. Fetch Real Satellite Tiles for wide bounding box
             stitched_img, ext = self._fetch_satellite_basemap(
-                min_lat=min_lat - pad_y,
-                max_lat=max_lat + pad_y,
-                min_lon=min_lon - pad_x,
-                max_lon=max_lon + pad_x,
+                min_lat=view_min_lat,
+                max_lat=view_max_lat,
+                min_lon=view_min_lon,
+                max_lon=view_max_lon,
                 zoom=15
             )
 
-            fig_w = 6.4
-            fig_h = fig_w * geo_ratio
-            fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=160)
+            fig, ax = plt.subplots(figsize=(7.5, 3.2), dpi=170)
             ax.set_aspect(aspect_corr)
             ax.set_facecolor('#0f172a')
             fig.patch.set_facecolor('#0f172a')
@@ -210,8 +212,8 @@ class PdfReportService:
                     fc = color_map.get(cls, "#22c55e")
                     is_hs = cell.h3_index in hs_set
                     ec = '#dc2626' if is_hs else '#ffffff'
-                    lw = 2.4 if is_hs else 0.6
-                    alpha = 0.65 if is_hs else 0.52
+                    lw = 2.4 if is_hs else 0.7
+                    alpha = 0.68 if is_hs else 0.55
                     ax.fill(x, y, alpha=alpha, fc=fc, ec=ec, lw=lw, zorder=3)
 
             # 4. Plot AOI boundary
@@ -228,8 +230,8 @@ class PdfReportService:
                 except Exception:
                     pass
 
-            ax.set_xlim(min_lon - pad_x, max_lon + pad_x)
-            ax.set_ylim(min_lat - pad_y, max_lat + pad_y)
+            ax.set_xlim(view_min_lon, view_max_lon)
+            ax.set_ylim(view_min_lat, view_max_lat)
             ax.set_title("Mekânsal Hasar Dağılımı ve H3 Grid Haritası (Uydu Altlığı)", color='#f8fafc', fontsize=9.5, fontweight='bold', pad=6)
             ax.axis('off')
 
@@ -252,7 +254,7 @@ class PdfReportService:
             )
 
             buf = io.BytesIO()
-            plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0.04, facecolor=fig.get_facecolor())
+            plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0.03, facecolor=fig.get_facecolor())
             plt.close(fig)
             buf.seek(0)
             return buf
@@ -273,7 +275,7 @@ class PdfReportService:
         aoi_wkt: Optional[str] = None
     ) -> bytes:
         """
-        Generates a formal, beautiful, multi-section A4 PDF Damage Assessment Report with Real Satellite Map Visual and Full Weather details.
+        Generates a formal, beautiful, multi-section A4 PDF Damage Assessment Report with Full-Width Satellite Map and Detailed Indicators.
         """
         _register_turkish_fonts()
 
@@ -383,7 +385,7 @@ class PdfReportService:
         story.append(info_table)
         story.append(Spacer(1, 5))
 
-        # 3. Weather & Meteorological Verification (Enhanced with Temperature & Humidity)
+        # 3. Weather & Meteorological Verification
         story.append(Paragraph("2. Meteorolojik Doğrulama, Sıcaklık ve Nem Göstergeleri", section_heading))
         weather = summary_data.get('weather') or weather_data or {}
         precip = weather.get('precipitation_mm', 0.0)
@@ -423,25 +425,13 @@ class PdfReportService:
         story.append(weather_table)
         story.append(Spacer(1, 5))
 
-        # 4. Real Satellite Map Visual Snapshot (Aspect-Ratio Preserved)
+        # 4. Full-Width Real Satellite Map Visual Snapshot
         if cells or aoi_wkt:
             map_img_buf = self._generate_map_snapshot(cells or [], aoi_wkt, hotspots or [])
             if map_img_buf:
-                try:
-                    pil_img = PILImage.open(map_img_buf)
-                    w_px, h_px = pil_img.size
-                    aspect = h_px / w_px
-                    target_w = 480
-                    target_h = target_w * aspect
-                    if target_h > 240:
-                        target_h = 240
-                        target_w = target_h / aspect
-                    map_img_buf.seek(0)
-                    story.append(Paragraph("3. Uydu Tabanlı Mekânsal Hasar Haritası", section_heading))
-                    story.append(Image(map_img_buf, width=target_w, height=target_h))
-                    story.append(Spacer(1, 5))
-                except Exception:
-                    pass
+                story.append(Paragraph("3. Uydu Tabanlı Mekânsal Hasar Haritası", section_heading))
+                story.append(Image(map_img_buf, width=520, height=210))
+                story.append(Spacer(1, 5))
 
         # 5. Damage Distribution & Pie Chart
         story.append(Paragraph("4. Hasar Dağılımı ve Şiddet Sınıflandırması", section_heading))
@@ -466,10 +456,10 @@ class PdfReportService:
             ('FONTSIZE', (0,0), (-1,-1), 8),
             ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
             ('PADDING', (0,0), (-1,-1), 3),
-            ('TEXTCOLOR', (0,1), (0,1), colors.HexColor('#16a34a')), # Green
-            ('TEXTCOLOR', (0,2), (0,2), colors.HexColor('#ca8a04')), # Yellow
-            ('TEXTCOLOR', (0,3), (0,3), colors.HexColor('#ea580c')), # Orange
-            ('TEXTCOLOR', (0,4), (0,4), colors.HexColor('#dc2626')), # Red
+            ('TEXTCOLOR', (0,1), (0,1), colors.HexColor('#16a34a')),
+            ('TEXTCOLOR', (0,2), (0,2), colors.HexColor('#ca8a04')),
+            ('TEXTCOLOR', (0,3), (0,3), colors.HexColor('#ea580c')),
+            ('TEXTCOLOR', (0,4), (0,4), colors.HexColor('#dc2626')),
         ]))
 
         # Pie Chart Drawing

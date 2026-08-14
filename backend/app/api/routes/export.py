@@ -80,13 +80,26 @@ async def export_pdf_report(
         "is_anomaly": weather.is_anomaly if weather else False
     }
 
-    if aoi:
+    geom_aoi = None
+    aoi_wkt = None
+    if aoi and aoi.geometry is not None:
         try:
-            import shapely.wkt
+            from geoalchemy2.shape import to_shape
+            geom_aoi = to_shape(aoi.geometry)
+            aoi_wkt = geom_aoi.wkt
+        except Exception:
+            try:
+                import shapely.wkt
+                geom_aoi = shapely.wkt.loads(str(aoi.geometry))
+                aoi_wkt = geom_aoi.wkt
+            except Exception:
+                pass
+
+    if geom_aoi:
+        try:
             from datetime import timedelta, date
             from app.infrastructure.external.openmeteo_client import OpenMeteoClient
             from app.application.services.weather_verification_service import WeatherVerificationService
-            geom_aoi = shapely.wkt.loads(aoi.geometry)
             cent = geom_aoi.centroid
             ev_date = job.event_date if isinstance(job.event_date, date) else job.event_date.date()
             client = OpenMeteoClient()
@@ -112,18 +125,18 @@ async def export_pdf_report(
 
     # Calculate approx area in ha
     area_ha = 0.0
-    if aoi:
-        import shapely.wkt
+    if geom_aoi:
         import math
         try:
-            geom = shapely.wkt.loads(aoi.geometry)
-            bounds = geom.bounds
+            bounds = geom_aoi.bounds
             avg_lat = (bounds[1] + bounds[3]) / 2.0
             lat_m = 111132.954 - 559.822 * math.cos(2 * math.radians(avg_lat))
             lng_m = 111412.84 * math.cos(math.radians(avg_lat))
-            area_ha = (geom.area * lat_m * lng_m) / 10000.0
+            area_ha = (geom_aoi.area * lat_m * lng_m) / 10000.0
         except Exception:
             area_ha = len(cells) * 1.5
+    else:
+        area_ha = len(cells) * 1.5
 
     pdf_service = PdfReportService()
     pdf_bytes = pdf_service.generate_damage_report(
@@ -136,7 +149,7 @@ async def export_pdf_report(
         weights=job.weights,
         cells=cells,
         hotspots=hotspots,
-        aoi_wkt=aoi.geometry if aoi else None
+        aoi_wkt=aoi_wkt
     )
 
     return Response(
