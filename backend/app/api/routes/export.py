@@ -95,6 +95,7 @@ async def export_pdf_report(
             except Exception:
                 pass
 
+    timeseries_w = None
     if geom_aoi:
         try:
             from datetime import timedelta, date
@@ -111,6 +112,7 @@ async def export_pdf_report(
             )
             v_service = WeatherVerificationService()
             weather_dict = v_service.verify(raw_w)
+            timeseries_w = await client.get_30day_timeseries(lat=cent.y, lon=cent.x, event_date=ev_date)
         except Exception:
             pass
 
@@ -149,7 +151,8 @@ async def export_pdf_report(
         weights=job.weights,
         cells=cells,
         hotspots=hotspots,
-        aoi_wkt=aoi_wkt
+        aoi_wkt=aoi_wkt,
+        weather_timeseries=timeseries_w
     )
 
     return Response(
