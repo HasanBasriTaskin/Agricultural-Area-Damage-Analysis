@@ -49,14 +49,18 @@ class ParcelDamageResultEntity(BaseEntity):
 
 class GridCellEntity(BaseEntity):
     job_id: uuid.UUID
+    h3_index: Optional[str] = None
     geometry: Any
     damage_score: float
+    damage_class: Optional[str] = None
 
 class HotspotResultEntity(BaseEntity):
     job_id: uuid.UUID
+    h3_index: Optional[str] = None
     geometry: Any
     intensity: float
     confidence: float
+    classification: Optional[str] = None
 
 class WeatherEventEntity(BaseEntity):
     job_id: uuid.UUID

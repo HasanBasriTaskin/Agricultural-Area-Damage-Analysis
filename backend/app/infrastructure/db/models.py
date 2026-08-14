@@ -82,16 +82,20 @@ class GridCell(Base):
     __tablename__ = "grid_cells"
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     job_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("analysis_jobs.id"))
+    h3_index: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     geometry: Mapped[Any] = mapped_column(Geometry(geometry_type="POLYGON", srid=4326, spatial_index=False))
     damage_score: Mapped[float] = mapped_column(Float)
+    damage_class: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
 class HotspotResult(Base):
     __tablename__ = "hotspot_results"
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     job_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("analysis_jobs.id"))
+    h3_index: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     geometry: Mapped[Any] = mapped_column(Geometry(geometry_type="POINT", srid=4326, spatial_index=False))
-    intensity: Mapped[float] = mapped_column(Float)
-    confidence: Mapped[float] = mapped_column(Float)
+    intensity: Mapped[float] = mapped_column(Float)  # z-score (G*)
+    confidence: Mapped[float] = mapped_column(Float)  # p-value
+    classification: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # e.g. 'Hotspot 99%'
 
 class WeatherEvent(Base):
     __tablename__ = "weather_events"

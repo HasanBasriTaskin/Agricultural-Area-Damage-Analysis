@@ -334,10 +334,71 @@ async def _finalize_job_async(job_id: uuid.UUID, results: list) -> None:
         
         logger.info(f"Fusion complete for job {job_id}: {fusion_result}")
         
-        # Sprint 6 calls for aggregating. For now, we transition to 'aggregating' status.
+        # Sprint 6: Aggregation (Grid & Hotspot Analysis)
         await _update_job_status(session_factory, job_id, status="aggregating")
+        
+        from geoalchemy2.shape import to_shape
+        from geoalchemy2.elements import WKTElement
+        from app.infrastructure.db.models import AOI, GridCell, HotspotResult
+        from app.application.services.grid_aggregation_service import GridAggregationService
+        from app.application.services.hotspot_service import HotspotService
+        
+        # Fetch AOI WKT
+        async with session_factory() as db:
+            stmt = select(AOI).join(AnalysisJob, AnalysisJob.aoi_id == AOI.id).where(AnalysisJob.id == job_id)
+            result = await db.execute(stmt)
+            aoi = result.scalar_one_or_none()
+            if not aoi:
+                raise ValueError(f"AOI not found for job {job_id}")
+            aoi_wkt = to_shape(aoi.geometry).wkt
+
+        # 1. Run Grid Aggregation in thread
+        grid_service = GridAggregationService()
+        grid_cells = await asyncio.to_thread(
+            grid_service.aggregate_raster_to_grid,
+            aoi_wkt,
+            fusion_result["fusion_tif_path"]
+        )
+        logger.info(f"Grid aggregation generated {len(grid_cells)} cells for job {job_id}")
+
+        # 2. Run Hotspot Analysis in thread
+        hotspot_service = HotspotService()
+        hotspot_results = await asyncio.to_thread(
+            hotspot_service.calculate_getis_ord_g_star,
+            grid_cells
+        )
+        logger.info(f"Hotspot analysis computed for {len(hotspot_results)} cells for job {job_id}")
+
+        # 3. Save Grid Cells & Hotspots to DB
+        async with session_factory() as db:
+            for gc in grid_cells:
+                db_grid = GridCell(
+                    job_id=job_id,
+                    h3_index=gc["h3_index"],
+                    geometry=WKTElement(gc["geometry_wkt"], srid=4326),
+                    damage_score=gc["damage_score"],
+                    damage_class=gc["damage_class"]
+                )
+                db.add(db_grid)
+
+            for hs in hotspot_results:
+                db_hs = HotspotResult(
+                    job_id=job_id,
+                    h3_index=hs["h3_index"],
+                    geometry=WKTElement(hs["centroid_wkt"], srid=4326),
+                    intensity=hs["intensity"],
+                    confidence=hs["confidence"],
+                    classification=hs["classification"]
+                )
+                db.add(db_hs)
+
+            await db.commit()
+
+        # Mark job as fully DONE
+        await _update_job_status(session_factory, job_id, status="done")
+        logger.info(f"Job {job_id} successfully finalized and marked as DONE")
     except Exception as e:
-        logger.error(f"Fusion failed for job {job_id}: {e}", exc_info=True)
+        logger.error(f"Finalization failed for job {job_id}: {e}", exc_info=True)
         await _update_job_status(session_factory, job_id, status="failed", error_message=str(e)[:500])
     finally:
         await engine.dispose()
