@@ -42,17 +42,33 @@
 ### Sprint 7: Dışa Aktarma ve Raporlama (Export & PDF Damage Report)
 - `ExportService`: GeoJSON, Shapefile (.zip), GeoPackage (.gpkg), CSV ve GeoTIFF raster indirme motoru.
 - `PdfReportService`: ReportLab ile A4 formatında onaylı, meteoroloji tablolu, renkli dinamik pasta grafikli ve ıslak imza alanlı resmi Hasar Tespit Raporu üretimi.
-- REST API Endpoint'leri:
-  - `GET /jobs/{id}/export/pdf`
-  - `GET /jobs/{id}/export/geotiff?layer=fusion|sar|ms`
-  - `GET /jobs/{id}/export/geojson`
-  - `GET /jobs/{id}/export/shapefile`
-  - `GET /jobs/{id}/export/geopackage`
-  - `GET /jobs/{id}/export/csv`
+- REST API Endpoint'leri: `GET /jobs/{id}/export/pdf`, `geotiff`, `geojson`, `shapefile`, `geopackage`, `csv`.
 - Frontend `ExportModal` bileşeni ve tek tıkla dosya indirme arayüzü.
-- Otomatik unit ve entegrasyon testleri (`test_sprint7.py`) ile tüm formatların byte doğrulaması.
+- Geniş açılı (16:9) uydu altlıklı harita görseli ve PostGIS `WKBElement` -> `to_shape()` tam uyumu.
+
+### Sprint 8: İleri Görselleştirme, Spektral Katmanlar, Swipe (Perde) & Zaman Serisi Analizi
+- **30 Günlük Meteorolojik İklim Zaman Serisi API'si:**
+  - `GET /api/v1/jobs/{id}/results/timeseries`: ERA5 arşiv ve tahmin verisi üzerinden afet öncesi 28 gün ve sonrası 2 gün olmak üzere günlük yağış, toprak nemi (0-7cm), sıcaklık ve rüzgar hızı.
+- **Frontend 30 Günlük Yağış & Nem Grafiği (Recharts):**
+  - `TimeSeriesChart.tsx`: Birikimli yağış sütunları (Bar), toprak nemi eğrisi (Line), ortalama sıcaklık çizgisi ve afet gününü gösteren kırmızı dikey referans çizgisi.
+- **Çoklu Spektral Katman Yöneticisi & Şeffaflık Denetimi:**
+  - Harita üzerinde anlık mod değiştirme:
+    - 🎯 **Füzyon Hasar Skoru**
+    - 💧 **ΔNDMI Nem Kaybı İndeksi**
+    - 🌿 **ΔNDRE Klorofil & Doku Hasarı**
+    - 📡 **SAR Radar Geri Saçılımı**
+  - Opacity Slider (%20 - %100) ve Altlık Seçici (Esri Uydu, Carto Koyu, OpenStreetMap).
+- **Harita Üzerinde Swipe (Dikey Perde) Karşılaştırma Aracı:**
+  - Sol taraf: Doğal Optik Uydu Altlığı (Afet Öncesi)
+  - Sağ taraf: Spektral H3 Hexagon Hasar Katmanı (Afet Sonrası)
+  - Kullanıcı perdeyi sağa/sola sürükleyerek hasarın tarla üzerindeki etkisini interaktif olarak inceler.
+- **PDF Raporuna 2. Sayfa (5 Panelli Spektral Matris Paneli):**
+  - Sayfa 1: Resmi Rapor Başlığı, AOI Özeti, Hava Durumu, Geniş Uydu Haritası, Hasar Dağılımı ve Hotspot Tablosu.
+  - Sayfa 2 (EK-1): 30 Günlük Yağış/Nem Grafiği + SAR Radar Haritası + NDMI Nem İndeksi + EVI Vejetasyon Yoğunluğu + NDRE Klorofil Haritası + Sensör & Metodoloji Teknik Tablosu.
+- **Sprint 8 Otomatik Test Paketi (`test_sprint8.py`):**
+  - Tüm endpoint'ler, zaman serisi doğrulamaları ve 2 sayfalık PDF çıktısı başarıyla test edildi.
 
 ---
 
 ## Sıradaki Adım
-- Sprint 8: İleri Görselleştirme & Harita Katmanları (Sentinel-2 RGB Katmanı, NDMI Nem Haritası, SAR Radar Katmanı, Afet Öncesi/Sonrası Swipe/Perde Karşılaştırma Aracı).
+- Kullanıcı kabul testleri, son optimizasyonlar ve final teslimatı.
