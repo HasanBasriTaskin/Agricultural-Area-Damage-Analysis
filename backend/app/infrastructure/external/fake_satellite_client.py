@@ -23,6 +23,15 @@ class FakeSatelliteClient(ISatelliteDataClient):
         # Returns a dummy constant image to simulate GEE response
         return ee.Image.constant(0.1).rename('VV').addBands(ee.Image.constant(0.01).rename('VH'))
 
+    def get_ms_image(self, aoi_wkt: str, start_date: datetime, end_date: datetime) -> Any:
+        # Returns a dummy MS image with necessary bands: B2, B4, B5, B8, B8A, B11
+        return (ee.Image.constant(0.1).rename('B2')
+                .addBands(ee.Image.constant(0.12).rename('B4'))
+                .addBands(ee.Image.constant(0.15).rename('B5'))
+                .addBands(ee.Image.constant(0.3).rename('B8'))
+                .addBands(ee.Image.constant(0.32).rename('B8A'))
+                .addBands(ee.Image.constant(0.2).rename('B11')))
+
     def download_image(self, image: Any, aoi_wkt: str, scale: int, prefix: str) -> str:
         # Returns a fake MinIO key
         return f"fake_minio_bucket/{prefix}_{uuid.uuid4()}.tif"

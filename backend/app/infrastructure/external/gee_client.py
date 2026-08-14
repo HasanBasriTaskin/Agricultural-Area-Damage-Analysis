@@ -72,12 +72,70 @@ class GEESatelliteClient(ISatelliteDataClient):
         # We mosaic or return the first image
         # Given we want the nearest pass, let's just mosaic
         image = s1_processed.mosaic().clip(parameter['ROI'])
+        
+        # Faz 0: Apply Agriculture Mask (ESA WorldCover v200 - class 40 is cropland)
+        world_cover = ee.ImageCollection("ESA/WorldCover/v200").first().clip(parameter['ROI'])
+        agri_mask = world_cover.eq(40)
+        image = image.updateMask(agri_mask)
+        
         return image
+
+    def get_ms_image(self, aoi_wkt: str, start_date: datetime, end_date: datetime) -> Any:
+        roi = self._geometry_to_ee_feature(aoi_wkt)
+        
+        collection = (ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+                      .filterBounds(roi)
+                      .filterDate(start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'))
+                      .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 10)))
+                      
+        count = collection.size().getInfo()
+        if count == 0:
+            raise ValueError(f"No Sentinel-2 images found in this area between {start_date.strftime('%Y-%m-%d')} and {end_date.strftime('%Y-%m-%d')}.")
+            
+        def apply_scl_mask(image):
+            scl = image.select('SCL')
+            # Mask out 3 (cloud shadow), 8 (cloud medium prob), 9 (cloud high prob), 10 (cirrus), 11 (snow/ice)
+            mask = (scl.neq(3)
+                    .And(scl.neq(8))
+                    .And(scl.neq(9))
+                    .And(scl.neq(10))
+                    .And(scl.neq(11)))
+            return image.updateMask(mask)
+            
+        # Apply mask and median mosaic
+        image = collection.map(apply_scl_mask).median().clip(roi)
+        
+        # Resample 20m bands to 10m
+        b10m = image.select(['B2', 'B3', 'B4', 'B8'])
+        # Get the projection of a native 10m band
+        proj10m = collection.first().select('B2').projection()
+        
+        b20m = image.select(['B5', 'B8A', 'B11']).resample('bilinear').reproject(
+            crs=proj10m,
+            scale=10
+        )
+        
+        ms_image = ee.Image.cat([b10m, b20m])
+        
+        # Faz 0: Apply Agriculture Mask
+        world_cover = ee.ImageCollection("ESA/WorldCover/v200").first().clip(roi)
+        agri_mask = world_cover.eq(40)
+        
+        return ms_image.updateMask(agri_mask)
 
     def download_image(self, image: Any, aoi_wkt: str, scale: int, prefix: str) -> str:
         """
         In a real scenario, this gets a download URL, downloads the tif to MinIO,
         and returns the MinIO key.
+
+        # TODO (Sprint sonrası / Mentor sunumu öncesi):
+        # GEE'nin getDownloadURL() metodu maksimum 32768 piksel/kenar sınırına sahip.
+        # 10m çözünürlükte bu ~25,000 ha'a karşılık geliyor.
+        # Daha büyük AOI'ler için şu yöntemlerden biri uygulanmalı:
+        #   1. AOI'yi küçük tile'lara (ızgara) böl, her birini ayrı indir, sonra birleştir (mosaic).
+        #   2. ee.batch.Export.image.toCloudStorage() API'sine geç (asenkron, GCS/MinIO hedef).
+        # Frontend tarafında alan sınırı kontrolü eklendi (25,000 ha) ancak
+        # büyük alan desteği için backend tile-split mimarisine geçilmesi gerekiyor.
         """
         roi = self._geometry_to_ee_feature(aoi_wkt)
         url = image.getDownloadURL({
