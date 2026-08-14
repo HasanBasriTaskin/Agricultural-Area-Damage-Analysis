@@ -1,18 +1,24 @@
+import io
 import uuid
-from typing import List, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import List, Dict, Any, Optional
+from datetime import date
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from shapely.geometry import mapping
 from geoalchemy2.shape import to_shape
 
 from app.infrastructure.db.database import get_db
+from app.infrastructure.db.models import AOI, AnalysisJob, WeatherEvent
 from app.infrastructure.repositories.sql_repositories import (
     SQLGridCellRepository,
     SQLHotspotRepository,
     SQLAnalysisJobRepository,
-    SQLOutputArtifactRepository
+    SQLOutputArtifactRepository,
+    SQLAOIRepository
 )
 from app.infrastructure.external.minio_client import MinioStorageClient
+from app.infrastructure.external.openmeteo_client import OpenMeteoClient
 
 router = APIRouter(prefix="/jobs", tags=["results"])
 
@@ -27,6 +33,9 @@ def get_job_repo(db: AsyncSession = Depends(get_db)) -> SQLAnalysisJobRepository
 
 def get_artifact_repo(db: AsyncSession = Depends(get_db)) -> SQLOutputArtifactRepository:
     return SQLOutputArtifactRepository(db)
+
+def get_aoi_repo(db: AsyncSession = Depends(get_db)) -> SQLAOIRepository:
+    return SQLAOIRepository(db)
 
 @router.get("/{job_id}/results/grid")
 async def get_grid_results(
@@ -104,20 +113,13 @@ async def get_results_summary(
     """
     Returns high-level statistical summary of the analysis results.
     """
-    # 1. Fetch Job
     job = await job_repo.get_by_id(job_id)
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
         
-    # 2. Fetch Grid Cells
     cells = await grid_repo.list_by_job(job_id)
-    
-    # 3. Fetch Hotspots
     hotspots = await hotspot_repo.list_by_job(job_id)
     
-    # 4. Fetch Weather Event
-    from sqlalchemy import select
-    from app.infrastructure.db.models import WeatherEvent
     weather_stmt = select(WeatherEvent).where(WeatherEvent.job_id == job_id).order_by(WeatherEvent.id.desc())
     weather_res = await db.execute(weather_stmt)
     weather = weather_res.scalar_one_or_none()
@@ -125,7 +127,6 @@ async def get_results_summary(
     scores = [c.damage_score for c in cells]
     mean_score = sum(scores) / len(scores) if scores else 0.0
     
-    # Distribution
     distribution = {"Yok": 0, "Hafif": 0, "Orta": 0, "Ağır": 0}
     for c in cells:
         cls = c.damage_class or "Yok"
@@ -147,6 +148,68 @@ async def get_results_summary(
             "soil_moisture_m3_m3": weather.soil_moisture_m3_m3 if weather else 0.0,
             "is_anomaly": weather.is_anomaly if weather else False
         } if weather else None
+    }
+
+@router.get("/{job_id}/results/timeseries")
+async def get_results_timeseries(
+    job_id: uuid.UUID,
+    job_repo: SQLAnalysisJobRepository = Depends(get_job_repo),
+    aoi_repo: SQLAOIRepository = Depends(get_aoi_repo)
+):
+    """
+    Returns 30-day daily precipitation, soil moisture, and temperature time series for the job location.
+    """
+    job = await job_repo.get_by_id(job_id)
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    aoi = await aoi_repo.get_by_id(job.aoi_id)
+    if not aoi or not aoi.geometry:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="AOI geometry not found")
+
+    geom_shape = to_shape(aoi.geometry)
+    cent = geom_shape.centroid
+    ev_date = job.event_date if isinstance(job.event_date, date) else job.event_date.date()
+
+    client = OpenMeteoClient()
+    try:
+        timeseries = await client.get_30day_timeseries(lat=cent.y, lon=cent.x, event_date=ev_date)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch weather time series: {str(e)}")
+
+    return {
+        "job_id": str(job_id),
+        "event_date": ev_date.strftime("%Y-%m-%d"),
+        "centroid": {"lat": cent.y, "lon": cent.x},
+        "count": len(timeseries),
+        "timeseries": timeseries
+    }
+
+@router.get("/{job_id}/layers/bounds")
+async def get_layer_bounds(
+    job_id: uuid.UUID,
+    job_repo: SQLAnalysisJobRepository = Depends(get_job_repo),
+    aoi_repo: SQLAOIRepository = Depends(get_aoi_repo)
+):
+    """
+    Returns geographical bounding box [[min_lat, min_lon], [max_lat, max_lon]] for map overlays.
+    """
+    job = await job_repo.get_by_id(job_id)
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    aoi = await aoi_repo.get_by_id(job.aoi_id)
+    if not aoi or not aoi.geometry:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="AOI geometry not found")
+
+    geom_shape = to_shape(aoi.geometry)
+    b = geom_shape.bounds # min_lon, min_lat, max_lon, max_lat
+    return {
+        "job_id": str(job_id),
+        "bounds": [
+            [b[1], b[0]], # South-West: [min_lat, min_lon]
+            [b[3], b[2]]  # North-East: [max_lat, max_lon]
+        ]
     }
 
 @router.get("/{job_id}/artifacts")
