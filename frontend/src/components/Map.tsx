@@ -10,10 +10,15 @@ const vertexIcon = L.divIcon({
     iconAnchor: [7, 7]
 });
 
-// Helper component to invalidate Leaflet map size on container resize
+// Helper component to invalidate Leaflet map size on container mount & resize
 function MapResizeHandler() {
     const map = useMap();
     useEffect(() => {
+        // Initial invalidate
+        const timer = setTimeout(() => {
+            map.invalidateSize();
+        }, 150);
+
         const resizeObserver = new ResizeObserver(() => {
             map.invalidateSize();
         });
@@ -22,6 +27,7 @@ function MapResizeHandler() {
             resizeObserver.observe(container);
         }
         return () => {
+            clearTimeout(timer);
             resizeObserver.disconnect();
         };
     }, [map]);
@@ -90,21 +96,18 @@ function DrawingHandler({
 // Spectral Mode Colormap Helper
 function getSpectralColor(score: number, mode: SpectralMode) {
     if (mode === 'ndmi') {
-        // Moisture Stress Colormap: Cyan/Blue (Healthy moisture) -> Yellow -> Vivid Orange/Red (Severe water loss)
         if (score < 0.20) return { color: '#0ea5e9', label: 'Nemli / Sağlam' };
         if (score < 0.45) return { color: '#eab308', label: 'Hafif Nem Kaybı' };
         if (score < 0.70) return { color: '#f97316', label: 'Orta Nem Stresi' };
         return { color: '#dc2626', label: 'Aşırı Su Kaybı' };
     }
     if (mode === 'ndre') {
-        // Chlorophyll Stress Colormap: Emerald -> Amber -> Crimson
         if (score < 0.20) return { color: '#16a34a', label: 'Klorofil Yüksek' };
         if (score < 0.45) return { color: '#f59e0b', label: 'Hafif Klorofil Düşüşü' };
         if (score < 0.70) return { color: '#ea580c', label: 'Orta Doku Hasarı' };
         return { color: '#b91c1c', label: 'Ağır Nekroz' };
     }
     if (mode === 'sar') {
-        // Radar Backscatter change: Slate -> Violet -> Red
         if (score < 0.20) return { color: '#64748b', label: 'Stabil Radar' };
         if (score < 0.45) return { color: '#8b5cf6', label: 'Hafif Geri Saçılım' };
         if (score < 0.70) return { color: '#d946ef', label: 'Orta Yapı Değişimi' };
@@ -211,7 +214,7 @@ export default function MapComponent({
     const swipeThresholdLng = minMaxLng.min + (minMaxLng.max - minMaxLng.min) * (swipePos / 100.0);
 
     return (
-        <div className="w-full h-full min-h-[550px] rounded-xl overflow-hidden border border-zinc-700/50 shadow-2xl relative bg-zinc-900 flex flex-col">
+        <div className="w-full h-full min-h-[550px] rounded-xl overflow-hidden border border-zinc-700/50 shadow-2xl relative bg-zinc-900">
             {/* Left Drawing Toolbar */}
             <div className="absolute top-4 left-4 z-[1000] flex flex-col gap-2 bg-zinc-900/90 p-2.5 rounded-xl border border-zinc-700 shadow-xl backdrop-blur-md">
                 {!isDrawing && points.length === 0 && (
@@ -430,135 +433,158 @@ export default function MapComponent({
             )}
 
             {/* Leaflet Map Canvas */}
-            <div className="flex-1 w-full h-full relative">
-                <MapContainer
-                    center={[39.0, 35.0]}
-                    zoom={6}
-                    scrollWheelZoom={true}
-                    className="w-full h-full z-0"
-                >
-                    <MapResizeHandler />
+            <MapContainer
+                center={[39.0, 35.0]}
+                zoom={6}
+                scrollWheelZoom={true}
+                className="w-full h-full z-0"
+                style={{ height: "100%", width: "100%", minHeight: "550px" }}
+            >
+                <MapResizeHandler />
 
-                    {/* Dynamic Base Tile Layer */}
-                    {baseMap === 'esri' && (
-                        <TileLayer
-                            attribution='&copy; <a href="https://www.esri.com">Esri</a> World Imagery'
-                            url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-                            maxZoom={19}
-                        />
-                    )}
-                    {baseMap === 'dark' && (
-                        <TileLayer
-                            attribution='&copy; <a href="https://carto.com">CARTO</a> Dark Matter'
-                            url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-                            maxZoom={19}
-                        />
-                    )}
-                    {baseMap === 'osm' && (
-                        <TileLayer
-                            attribution='&copy; <a href="https://www.openstreetmap.org">OpenStreetMap</a>'
-                            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                            maxZoom={19}
-                        />
-                    )}
+                {/* Dynamic Base Tile Layer */}
+                {baseMap === 'esri' && (
+                    <TileLayer
+                        attribution='&copy; <a href="https://www.esri.com">Esri</a> World Imagery'
+                        url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+                        maxZoom={19}
+                    />
+                )}
+                {baseMap === 'dark' && (
+                    <TileLayer
+                        attribution='&copy; <a href="https://carto.com">CARTO</a> Dark Matter'
+                        url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+                        maxZoom={19}
+                    />
+                )}
+                {baseMap === 'osm' && (
+                    <TileLayer
+                        attribution='&copy; <a href="https://www.openstreetmap.org">OpenStreetMap</a>'
+                        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                        maxZoom={19}
+                    />
+                )}
 
-                    <DrawingHandler isDrawing={isDrawing} onMapClick={handleMapClick} />
+                <DrawingHandler isDrawing={isDrawing} onMapClick={handleMapClick} />
 
-                    {/* Drawn Polygon Preview */}
-                    {points.length >= 3 && (
+                {/* Drawn Polygon Preview */}
+                {points.length >= 3 && (
+                    <Polygon
+                        positions={points}
+                        pathOptions={{
+                            color: areaTooLarge ? '#ef4444' : '#38bdf8',
+                            fillColor: areaTooLarge ? '#ef4444' : '#38bdf8',
+                            fillOpacity: 0.25,
+                            weight: 2.5,
+                            dashArray: '6, 6'
+                        }}
+                    />
+                )}
+
+                {/* Drawing Vertices Markers */}
+                {points.map((pos, idx) => (
+                    <Marker
+                        key={idx}
+                        position={pos}
+                        icon={vertexIcon}
+                        draggable={!isDrawing}
+                        eventHandlers={{
+                            drag: (e) => {
+                                const latlng = e.target.getLatLng();
+                                setPoints(prev => {
+                                    const newPts = [...prev];
+                                    newPts[idx] = [latlng.lat, latlng.lng];
+                                    return newPts;
+                                });
+                            },
+                            dragend: (e) => {
+                                const latlng = e.target.getLatLng();
+                                const newPts = [...points];
+                                newPts[idx] = [latlng.lat, latlng.lng];
+                                if (newPts.length >= 3) {
+                                    const ha = calcAreaHa(newPts);
+                                    onPolygonChange(coordsToWkt(newPts), ha);
+                                }
+                            }
+                        }}
+                    />
+                ))}
+
+                {/* H3 Hexagonal Grid Features */}
+                {showGridLayer && gridFeatures.map((f, idx) => {
+                    if (!f.geometry || !f.geometry.coordinates) return null;
+                    const ring = f.geometry.coordinates[0];
+                    const positions: [number, number][] = ring.map((pt: [number, number]) => [pt[1], pt[0]]);
+                    const centroidLng = ring.reduce((sum: number, pt: [number, number]) => sum + pt[0], 0) / ring.length;
+
+                    // Swipe Curtain Filtering (Hide cells on the left side of the curtain if swipe is active)
+                    if (isSwipeMode && centroidLng < swipeThresholdLng) {
+                        return null;
+                    }
+
+                    const score = f.properties.damage_score || 0;
+                    const h3Idx = f.properties.h3_index;
+                    const spectralInfo = getSpectralColor(score, spectralMode);
+
+                    // Hotspot Check
+                    const hsProp = hotspotMap[h3Idx];
+                    const isHotspot = hsProp && hsProp.classification && hsProp.classification.includes("Hotspot");
+                    const isColdspot = hsProp && hsProp.classification && hsProp.classification.includes("Coldspot");
+
+                    let strokeColor = '#ffffff';
+                    let strokeWidth = 0.8;
+                    let fillOpacity = gridOpacity;
+
+                    if (isHotspot) {
+                        strokeColor = '#ef4444';
+                        strokeWidth = 2.8;
+                        fillOpacity = Math.min(1.0, gridOpacity + 0.15);
+                    } else if (isColdspot) {
+                        strokeColor = '#10b981';
+                        strokeWidth = 2.0;
+                    }
+
+                    return (
                         <Polygon
-                            positions={points}
+                            key={idx}
+                            positions={positions}
                             pathOptions={{
-                                color: areaTooLarge ? '#ef4444' : '#38bdf8',
-                                fillColor: areaTooLarge ? '#ef4444' : '#38bdf8',
-                                fillOpacity: 0.25,
-                                weight: 2.5,
-                                dashArray: '6, 6'
+                                color: strokeColor,
+                                fillColor: spectralInfo.color,
+                                fillOpacity: fillOpacity,
+                                weight: strokeWidth
                             }}
-                        />
-                    )}
-
-                    {/* Drawing Vertices Markers */}
-                    {isDrawing && points.map((p, idx) => (
-                        <Marker key={idx} position={p} icon={vertexIcon} />
-                    ))}
-
-                    {/* H3 Hexagonal Grid Features */}
-                    {showGridLayer && gridFeatures.map((f, idx) => {
-                        if (!f.geometry || !f.geometry.coordinates) return null;
-                        const ring = f.geometry.coordinates[0];
-                        const positions: [number, number][] = ring.map((pt: [number, number]) => [pt[1], pt[0]]);
-                        const centroidLng = ring.reduce((sum: number, pt: [number, number]) => sum + pt[0], 0) / ring.length;
-
-                        // Swipe Curtain Filtering (Hide cells on the left side of the curtain if swipe is active)
-                        if (isSwipeMode && centroidLng < swipeThresholdLng) {
-                            return null;
-                        }
-
-                        const score = f.properties.damage_score || 0;
-                        const h3Idx = f.properties.h3_index;
-                        const spectralInfo = getSpectralColor(score, spectralMode);
-
-                        // Hotspot Check
-                        const hsProp = hotspotMap[h3Idx];
-                        const isHotspot = hsProp && hsProp.classification && hsProp.classification.includes("Hotspot");
-                        const isColdspot = hsProp && hsProp.classification && hsProp.classification.includes("Coldspot");
-
-                        let strokeColor = '#ffffff';
-                        let strokeWidth = 0.8;
-                        let fillOpacity = gridOpacity;
-
-                        if (isHotspot) {
-                            strokeColor = '#ef4444';
-                            strokeWidth = 2.8;
-                            fillOpacity = Math.min(1.0, gridOpacity + 0.15);
-                        } else if (isColdspot) {
-                            strokeColor = '#10b981';
-                            strokeWidth = 2.0;
-                        }
-
-                        return (
-                            <Polygon
-                                key={idx}
-                                positions={positions}
-                                pathOptions={{
-                                    color: strokeColor,
-                                    fillColor: spectralInfo.color,
-                                    fillOpacity: fillOpacity,
-                                    weight: strokeWidth
-                                }}
-                            >
-                                <Tooltip direction="top" offset={[0, -10]} opacity={0.95}>
-                                    <div className="text-xs space-y-1 bg-zinc-900/95 text-zinc-100 p-2.5 rounded-lg border border-zinc-700 shadow-2xl">
-                                        <div className="flex items-center justify-between gap-3 border-b border-zinc-700 pb-1">
-                                            <span className="font-mono text-[10px] text-zinc-400">{h3Idx}</span>
-                                            {isHotspot && (
-                                                <span className="px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 font-bold text-[10px]">
-                                                    🔥 Hotspot
-                                                </span>
-                                            )}
-                                        </div>
-                                        <div className="flex justify-between gap-4 font-semibold">
-                                            <span>Hasar Skoru:</span>
-                                            <span className="text-amber-400 font-mono">%{Math.round(score * 100)}</span>
-                                        </div>
-                                        <div className="flex justify-between gap-4 text-zinc-400 text-[10px]">
-                                            <span>Sınıf:</span>
-                                            <span className="font-medium text-zinc-200">{spectralInfo.label}</span>
-                                        </div>
-                                        {hsProp && (
-                                            <div className="flex justify-between gap-4 text-zinc-400 text-[10px]">
-                                                <span>Z-Skoru:</span>
-                                                <span className="font-mono text-zinc-300">{Number(hsProp.intensity_z_score).toFixed(2)}</span>
-                                            </div>
+                        >
+                            <Tooltip direction="top" offset={[0, -10]} opacity={0.95}>
+                                <div className="text-xs space-y-1 bg-zinc-900/95 text-zinc-100 p-2.5 rounded-lg border border-zinc-700 shadow-2xl">
+                                    <div className="flex items-center justify-between gap-3 border-b border-zinc-700 pb-1">
+                                        <span className="font-mono text-[10px] text-zinc-400">{h3Idx}</span>
+                                        {isHotspot && (
+                                            <span className="px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 font-bold text-[10px]">
+                                                🔥 Hotspot
+                                            </span>
                                         )}
                                     </div>
-                                </Tooltip>
-                            </Polygon>
-                        );
-                    })}
-                </MapContainer>
-            </div>
+                                    <div className="flex justify-between gap-4 font-semibold">
+                                        <span>Hasar Skoru:</span>
+                                        <span className="text-amber-400 font-mono">%{Math.round(score * 100)}</span>
+                                    </div>
+                                    <div className="flex justify-between gap-4 text-zinc-400 text-[10px]">
+                                        <span>Sınıf:</span>
+                                        <span className="font-medium text-zinc-200">{spectralInfo.label}</span>
+                                    </div>
+                                    {hsProp && (
+                                        <div className="flex justify-between gap-4 text-zinc-400 text-[10px]">
+                                            <span>Z-Skoru:</span>
+                                            <span className="font-mono text-zinc-300">{Number(hsProp.intensity_z_score).toFixed(2)}</span>
+                                        </div>
+                                    )}
+                                </div>
+                            </Tooltip>
+                        </Polygon>
+                    );
+                })}
+            </MapContainer>
         </div>
     );
 }
