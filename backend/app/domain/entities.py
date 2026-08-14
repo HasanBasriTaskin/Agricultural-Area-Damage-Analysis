@@ -34,6 +34,7 @@ class AnalysisJobEntity(BaseEntity):
     status: str = "queued"
     sar_status: Optional[str] = "queued"
     ms_status: Optional[str] = "queued"
+    weather_status: Optional[str] = "queued"
     event_date: datetime
     weights: Optional[dict] = None
     error_message: Optional[str] = None
@@ -61,6 +62,7 @@ class WeatherEventEntity(BaseEntity):
     job_id: uuid.UUID
     precipitation_mm: Optional[float] = None
     wind_speed_kmh: Optional[float] = None
+    soil_moisture_m3_m3: Optional[float] = None
     is_anomaly: bool = False
 
 class OutputArtifactEntity(BaseEntity):

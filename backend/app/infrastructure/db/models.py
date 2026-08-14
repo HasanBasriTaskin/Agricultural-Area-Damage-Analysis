@@ -59,6 +59,7 @@ class AnalysisJob(Base):
     status: Mapped[JobStatusEnum] = mapped_column(Enum(JobStatusEnum), default=JobStatusEnum.QUEUED)
     sar_status: Mapped[Optional[str]] = mapped_column(String, nullable=True, default="queued")
     ms_status: Mapped[Optional[str]] = mapped_column(String, nullable=True, default="queued")
+    weather_status: Mapped[Optional[str]] = mapped_column(String, nullable=True, default="queued")
     event_date: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     weights: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(String, nullable=True)
@@ -98,6 +99,7 @@ class WeatherEvent(Base):
     job_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("analysis_jobs.id"))
     precipitation_mm: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     wind_speed_kmh: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    soil_moisture_m3_m3: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     is_anomaly: Mapped[bool] = mapped_column(Boolean, default=False)
 
 class OutputArtifact(Base):

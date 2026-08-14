@@ -37,8 +37,17 @@ export default function HomePage() {
   const [jobStatus, setJobStatus] = useState<string | null>(null);
   const [sarStatus, setSarStatus] = useState<string | null>(null);
   const [msStatus, setMsStatus] = useState<string | null>(null);
+  const [weatherStatus, setWeatherStatus] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [areaHa, setAreaHa] = useState<number>(0);
+
+  // Weights state
+  const [showWeights, setShowWeights] = useState(false);
+  const [weightSar, setWeightSar] = useState(0.35);
+  const [weightNdmi, setWeightNdmi] = useState(0.25);
+  const [weightNdre, setWeightNdre] = useState(0.20);
+  const [weightPrecip, setWeightPrecip] = useState(0.12);
+  const [weightSm, setWeightSm] = useState(0.08);
 
   const MAX_AREA_HA = 25000;
 
@@ -100,6 +109,13 @@ export default function HomePage() {
         body: JSON.stringify({
           aoi_id: aoiData.id,
           event_date: new Date(eventDate).toISOString(),
+          weights: {
+            sar: weightSar,
+            ndmi: weightNdmi,
+            ndre: weightNdre,
+            precipitation: weightPrecip,
+            soil_moisture: weightSm
+          }
         })
       });
 
@@ -135,6 +151,7 @@ export default function HomePage() {
           setJobStatus(data.status);
           setSarStatus(data.sar_status);
           setMsStatus(data.ms_status);
+          setWeatherStatus(data.weather_status);
           if (data.status === "done") {
             toast.success("Analiz tamamlandı!");
           } else if (data.status === "failed") {
@@ -205,6 +222,41 @@ export default function HomePage() {
                 />
               </div>
 
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={() => setShowWeights(!showWeights)}
+                  className="text-xs text-blue-400 hover:text-blue-300 font-medium"
+                >
+                  {showWeights ? "Ağırlık Ayarlarını Gizle" : "Ağırlık Ayarlarını Göster (Opsiyonel)"}
+                </button>
+
+                {showWeights && (
+                  <div className="grid grid-cols-2 gap-3 p-3 bg-zinc-950 border border-zinc-800 rounded-md mt-2">
+                    <div className="space-y-1">
+                      <label className="text-xs text-zinc-400">SAR Ağırlığı</label>
+                      <input type="number" step="0.01" value={weightSar} onChange={e => setWeightSar(parseFloat(e.target.value) || 0)} className="w-full h-8 rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-300" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs text-zinc-400">NDMI Ağırlığı</label>
+                      <input type="number" step="0.01" value={weightNdmi} onChange={e => setWeightNdmi(parseFloat(e.target.value) || 0)} className="w-full h-8 rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-300" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs text-zinc-400">NDRE Ağırlığı</label>
+                      <input type="number" step="0.01" value={weightNdre} onChange={e => setWeightNdre(parseFloat(e.target.value) || 0)} className="w-full h-8 rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-300" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs text-zinc-400">Yağış Ağırlığı</label>
+                      <input type="number" step="0.01" value={weightPrecip} onChange={e => setWeightPrecip(parseFloat(e.target.value) || 0)} className="w-full h-8 rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-300" />
+                    </div>
+                    <div className="space-y-1 col-span-2">
+                      <label className="text-xs text-zinc-400">Toprak Nemi Ağırlığı</label>
+                      <input type="number" step="0.01" value={weightSm} onChange={e => setWeightSm(parseFloat(e.target.value) || 0)} className="w-full h-8 rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-300" />
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <button 
                 onClick={handleSave}
                 disabled={isSaving || !wkt || areaHa > MAX_AREA_HA || (activeJobId !== null && jobStatus !== 'done' && jobStatus !== 'failed')}
@@ -246,6 +298,9 @@ export default function HomePage() {
 
                   {/* MS Pipeline row */}
                   <PipelineRow label="🌿 MS Pipeline" status={msStatus} />
+
+                  {/* Weather Pipeline row */}
+                  <PipelineRow label="🌤️ Weather Pipeline" status={weatherStatus} />
 
                   <p className="text-xs text-zinc-500 mt-2 truncate" title={activeJobId}>
                     ID: {activeJobId}

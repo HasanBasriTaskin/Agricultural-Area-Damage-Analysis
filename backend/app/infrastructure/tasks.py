@@ -6,6 +6,10 @@ import logging
 from celery import Celery
 from app.infrastructure.external.gee_client import GEESatelliteClient
 from app.application.pipelines.sar_pipeline import SarPipelineService
+from app.application.pipelines.ms_pipeline import MsPipelineService
+from app.application.pipelines.weather_pipeline import WeatherPipelineService
+from app.infrastructure.external.openmeteo_client import OpenMeteoClient
+from app.application.services.weather_verification_service import WeatherVerificationService
 from sqlalchemy import select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from shapely import wkb
@@ -199,6 +203,80 @@ def run_ms_pipeline(self, job_id_str: str) -> dict[str, Any]:
         loop.close()
 
 
+async def _run_weather_pipeline_async(job_id: uuid.UUID) -> dict:
+    from app.infrastructure.db.models import AnalysisJob, AOI as ModelAOI, WeatherEvent
+
+    session_factory, engine = _make_session_factory()
+    try:
+        async with session_factory() as db:
+            stmt = select(AnalysisJob).where(AnalysisJob.id == job_id)
+            result = await db.execute(stmt)
+            db_job = result.scalar_one_or_none()
+
+            if not db_job:
+                raise ValueError(f"Job {job_id} not found")
+
+            aoi_id = db_job.aoi_id
+            event_date = db_job.event_date
+
+            stmt2 = select(ModelAOI).where(ModelAOI.id == aoi_id)
+            result2 = await db.execute(stmt2)
+            model_aoi = result2.scalar_one_or_none()
+            if not model_aoi:
+                raise ValueError(f"AOI {aoi_id} not found")
+
+            geom = wkb.loads(bytes(model_aoi.geometry.data))
+            aoi_wkt = geom.wkt
+
+        # We set weather_status to 'processing'
+        await _update_job_status(session_factory, job_id, weather_status="processing")
+
+        client = OpenMeteoClient()
+        verification_service = WeatherVerificationService()
+        pipeline = WeatherPipelineService(client, verification_service)
+        
+        weather_result = await pipeline.run_pipeline(job_id, aoi_wkt, event_date)
+        
+        # Save to DB
+        async with session_factory() as db:
+            weather_event = WeatherEvent(
+                job_id=job_id,
+                precipitation_mm=weather_result.get("precipitation_mm"),
+                wind_speed_kmh=weather_result.get("wind_speed_kmh"),
+                soil_moisture_m3_m3=weather_result.get("soil_moisture_m3_m3"),
+                is_anomaly=weather_result.get("is_anomaly")
+            )
+            db.add(weather_event)
+            await db.commit()
+            
+        await _update_job_status(session_factory, job_id, weather_status="done")
+        return weather_result
+    except Exception as e:
+        logger.error(f"Weather Pipeline failed for job {job_id}: {e}", exc_info=True)
+        try:
+            await _update_job_status(session_factory, job_id, weather_status="failed")
+        except Exception:
+            pass
+        raise
+    finally:
+        await engine.dispose()
+
+
+@celery_app.task(bind=True, name="app.infrastructure.tasks.run_weather_pipeline")
+def run_weather_pipeline(self, job_id_str: str) -> dict[str, Any]:
+    job_id = uuid.UUID(job_id_str)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        result = loop.run_until_complete(_run_weather_pipeline_async(job_id))
+        return {"job_id": job_id_str, "status": "DONE", "result": result, "pipeline": "Weather"}
+    except Exception as e:
+        logger.error(f"Celery task run_weather_pipeline failed for {job_id_str}: {e}", exc_info=True)
+        return {"job_id": job_id_str, "status": "FAILED", "error": str(e)[:500], "pipeline": "Weather"}
+    finally:
+        loop.close()
+
+
 async def _finalize_job_async(job_id: uuid.UUID, results: list) -> None:
     session_factory, engine = _make_session_factory()
     try:
@@ -207,8 +285,60 @@ async def _finalize_job_async(job_id: uuid.UUID, results: list) -> None:
         if failed:
             error_msgs = " | ".join([f"{r.get('pipeline')}: {r.get('error')}" for r in failed])
             await _update_job_status(session_factory, job_id, status="failed", error_message=error_msgs[:500])
-        else:
-            await _update_job_status(session_factory, job_id, status="done")
+            return
+
+        # All successful. Change status to fusing
+        await _update_job_status(session_factory, job_id, status="fusing")
+        
+        # Extract inputs for Fusion
+        sar_result = next((r for r in results if r.get("pipeline") == "SAR"), None)
+        ms_result = next((r for r in results if r.get("pipeline") == "MS"), None)
+        
+        sar_tif_path = sar_result.get("result_key") if sar_result else None
+        ms_tif_path = ms_result.get("result_key") if ms_result else None
+
+        from sqlalchemy import select
+        from app.infrastructure.db.models import AnalysisJob, WeatherEvent
+        
+        async with session_factory() as db:
+            # Get weights
+            stmt = select(AnalysisJob).where(AnalysisJob.id == job_id)
+            result = await db.execute(stmt)
+            job = result.scalar_one_or_none()
+            weights = job.weights if job and job.weights else {}
+            
+            # Get weather event
+            stmt = select(WeatherEvent).where(WeatherEvent.job_id == job_id).order_by(WeatherEvent.id.desc())
+            result = await db.execute(stmt)
+            weather = result.scalar_one_or_none()
+            
+            precip = weather.precipitation_mm if weather and weather.precipitation_mm else 0.0
+            sm = weather.soil_moisture_m3_m3 if weather and weather.soil_moisture_m3_m3 else 0.0
+            
+        if not sar_tif_path or not ms_tif_path:
+            raise ValueError("Missing SAR or MS tif path for fusion")
+
+        # Run Fusion
+        from app.application.strategies.weighted_fusion_strategy import WeightedFusionStrategy
+        from app.application.services.fusion_service import FusionService
+        
+        strategy = WeightedFusionStrategy()
+        fusion_service = FusionService(strategy)
+        
+        # Run synchronous fusion logic in a thread to avoid blocking async loop
+        import asyncio
+        fusion_result = await asyncio.to_thread(
+            fusion_service.run_fusion,
+            job_id, sar_tif_path, ms_tif_path, precip, sm, weights
+        )
+        
+        logger.info(f"Fusion complete for job {job_id}: {fusion_result}")
+        
+        # Sprint 6 calls for aggregating. For now, we transition to 'aggregating' status.
+        await _update_job_status(session_factory, job_id, status="aggregating")
+    except Exception as e:
+        logger.error(f"Fusion failed for job {job_id}: {e}", exc_info=True)
+        await _update_job_status(session_factory, job_id, status="failed", error_message=str(e)[:500])
     finally:
         await engine.dispose()
 
