@@ -49,6 +49,12 @@ export default function HomePage() {
   const [weightPrecip, setWeightPrecip] = useState(0.12);
   const [weightSm, setWeightSm] = useState(0.08);
 
+  // Results state
+  const [summaryData, setSummaryData] = useState<any | null>(null);
+  const [gridData, setGridData] = useState<any[]>([]);
+  const [hotspotData, setHotspotData] = useState<any[]>([]);
+  const [showGridList, setShowGridList] = useState(false);
+
   const MAX_AREA_HA = 25000;
 
   // Leaflet needs 'window' — load only on client
@@ -154,6 +160,28 @@ export default function HomePage() {
           setWeatherStatus(data.weather_status);
           if (data.status === "done") {
             toast.success("Analiz tamamlandı!");
+            // Fetch summary, grid, and hotspots results
+            try {
+              const [summaryRes, gridRes, hsRes] = await Promise.all([
+                fetch(`${apiUrl}/api/v1/jobs/${activeJobId}/results/summary`),
+                fetch(`${apiUrl}/api/v1/jobs/${activeJobId}/results/grid`),
+                fetch(`${apiUrl}/api/v1/jobs/${activeJobId}/results/hotspots`)
+              ]);
+              if (summaryRes.ok) {
+                const sData = await summaryRes.json();
+                setSummaryData(sData);
+              }
+              if (gridRes.ok) {
+                const gData = await gridRes.json();
+                setGridData(gData.features || []);
+              }
+              if (hsRes.ok) {
+                const hData = await hsRes.json();
+                setHotspotData(hData.features || []);
+              }
+            } catch (err) {
+              console.error("Failed to load results", err);
+            }
           } else if (data.status === "failed") {
             setErrorMessage(data.error_message);
             toast.error("Analiz başarısız oldu.");
@@ -177,14 +205,18 @@ export default function HomePage() {
           </p>
         </header>
 
-        <section className="flex flex-col md:flex-row gap-6 flex-1 min-h-[600px]">
+        <section className="flex flex-col md:flex-row gap-6 flex-1 h-[calc(100vh-170px)] min-h-[600px] items-stretch">
           {/* Map Area */}
-          <div className="flex-1 rounded-xl relative">
-            <MapComponent onPolygonChange={handlePolygonChange} />
+          <div className="flex-1 h-full rounded-xl relative">
+            <MapComponent
+              onPolygonChange={handlePolygonChange}
+              gridFeatures={gridData}
+              hotspotFeatures={hotspotData}
+            />
           </div>
 
           {/* Sidebar / Form */}
-          <div className="w-full md:w-96 flex flex-col gap-4 bg-zinc-900/50 p-6 rounded-xl border border-zinc-800">
+          <div className="w-full md:w-96 flex flex-col gap-4 bg-zinc-900/50 p-6 rounded-xl border border-zinc-800 h-full overflow-y-auto custom-scrollbar">
             <div>
               <h2 className="text-2xl font-semibold tracking-tight">Yeni Analiz Başlat</h2>
               <p className="text-sm text-muted-foreground mt-1">Harita üzerinden tarlayı çizin ve tarihi seçin.</p>
@@ -310,6 +342,81 @@ export default function HomePage() {
                       <p className="text-xs text-red-400 break-words font-mono">
                         {errorMessage}
                       </p>
+                    </div>
+                  )}
+
+                  {/* Sprint 6: Results Summary & MVP Grid Table */}
+                  {summaryData && (
+                    <div className="mt-4 pt-4 border-t border-zinc-800 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-zinc-300">📊 Uzamsal Birikim Özeti</span>
+                        <span className="text-[10px] bg-blue-950 text-blue-300 border border-blue-800 px-1.5 py-0.5 rounded">H3 Hex</span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="p-2.5 bg-zinc-900 rounded border border-zinc-800">
+                          <p className="text-[10px] text-zinc-400">Ortalama Hasar</p>
+                          <p className="text-base font-bold text-amber-400">%{Math.round(summaryData.mean_damage_score * 100)}</p>
+                        </div>
+                        <div className="p-2.5 bg-zinc-900 rounded border border-zinc-800">
+                          <p className="text-[10px] text-zinc-400">Toplam Grid Hücresi</p>
+                          <p className="text-base font-bold text-zinc-200">{summaryData.total_cells}</p>
+                        </div>
+                        <div className="p-2.5 bg-zinc-900 rounded border border-zinc-800">
+                          <p className="text-[10px] text-zinc-400">🔥 Hotspot Odak</p>
+                          <p className="text-base font-bold text-red-400">{summaryData.hotspot_cells_count}</p>
+                        </div>
+                        <div className="p-2.5 bg-zinc-900 rounded border border-zinc-800">
+                          <p className="text-[10px] text-zinc-400">❄️ Coldspot (Güvenli)</p>
+                          <p className="text-base font-bold text-emerald-400">{summaryData.coldspot_cells_count}</p>
+                        </div>
+                      </div>
+
+                      {/* Class Distribution Badges */}
+                      <div className="space-y-1 pt-1">
+                        <p className="text-[10px] text-zinc-400 font-medium">Hasar Sınıf Dağılımı</p>
+                        <div className="flex flex-wrap gap-1">
+                          <span className="text-[10px] bg-emerald-950 text-emerald-300 border border-emerald-800 px-2 py-0.5 rounded">
+                            Yok: {summaryData.distribution?.Yok || 0}
+                          </span>
+                          <span className="text-[10px] bg-yellow-950 text-yellow-300 border border-yellow-800 px-2 py-0.5 rounded">
+                            Hafif: {summaryData.distribution?.Hafif || 0}
+                          </span>
+                          <span className="text-[10px] bg-orange-950 text-orange-300 border border-orange-800 px-2 py-0.5 rounded">
+                            Orta: {summaryData.distribution?.Orta || 0}
+                          </span>
+                          <span className="text-[10px] bg-red-950 text-red-300 border border-red-800 px-2 py-0.5 rounded">
+                            Ağır: {summaryData.distribution?.Ağır || 0}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Toggle Grid Table */}
+                      <div className="pt-2">
+                        <button
+                          type="button"
+                          onClick={() => setShowGridList(!showGridList)}
+                          className="w-full py-1.5 text-xs text-zinc-400 bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 rounded font-medium transition-colors"
+                        >
+                          {showGridList ? "Grid Listesini Gizle" : `Grid Hücrelerini Listele (${gridData.length})`}
+                        </button>
+
+                        {showGridList && (
+                          <div className="mt-2 max-h-48 overflow-y-auto space-y-1.5 pr-1 text-[11px]">
+                            {gridData.map((f, i) => (
+                              <div key={i} className="p-2 bg-zinc-900/80 rounded border border-zinc-800/80 flex items-center justify-between">
+                                <div>
+                                  <p className="font-mono text-[10px] text-zinc-300">{f.properties.h3_index}</p>
+                                  <p className="text-zinc-500 text-[9px]">{f.properties.damage_class}</p>
+                                </div>
+                                <span className={`font-semibold ${f.properties.damage_score > 0.45 ? 'text-red-400' : 'text-zinc-300'}`}>
+                                  %{Math.round(f.properties.damage_score * 100)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>

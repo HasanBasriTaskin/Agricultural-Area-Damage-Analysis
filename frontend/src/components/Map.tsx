@@ -1,6 +1,6 @@
 "use client"
-import React, { useState } from 'react';
-import { MapContainer, TileLayer, Polygon, Marker, Polyline, useMapEvents } from 'react-leaflet';
+import React, { useState, useEffect } from 'react';
+import { MapContainer, TileLayer, Polygon, Marker, Polyline, Tooltip, useMapEvents, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
@@ -10,23 +10,39 @@ const vertexIcon = L.divIcon({
     iconAnchor: [7, 7]
 });
 
+// Helper component to invalidate Leaflet map size on container resize
+function MapResizeHandler() {
+    const map = useMap();
+    useEffect(() => {
+        const resizeObserver = new ResizeObserver(() => {
+            map.invalidateSize();
+        });
+        const container = map.getContainer();
+        if (container) {
+            resizeObserver.observe(container);
+        }
+        return () => {
+            resizeObserver.disconnect();
+        };
+    }, [map]);
+    return null;
+}
+
 // GeoJSON to WKT Polygon converter
 function coordsToWkt(coordinates: [number, number][]): string | null {
     if (coordinates.length < 3) return null;
     const ring = [...coordinates];
-    // Close the ring (Leaflet uses [lat, lng], WKT uses lng lat)
     if (ring[0][0] !== ring[ring.length - 1][0] || ring[0][1] !== ring[ring.length - 1][1]) {
         ring.push([...ring[0]] as [number, number]);
     }
-    // WKT format: POLYGON((lng lat, lng lat, ...))
     const points = ring.map((p) => `${p[1]} ${p[0]}`).join(', ');
     return `POLYGON((${points}))`;
 }
 
-// Approximate area in hectares using Shoelace formula + lat/lng degree correction
+// Area calculation
 function calcAreaHa(coordinates: [number, number][]): number {
     if (coordinates.length < 3) return 0;
-    const R = 6371000; // Earth radius in meters
+    const R = 6371000;
     const toRad = (d: number) => d * Math.PI / 180;
     const avgLat = coordinates.reduce((s, p) => s + p[0], 0) / coordinates.length;
     const latM = toRad(1) * R;
@@ -38,18 +54,17 @@ function calcAreaHa(coordinates: [number, number][]): number {
         const [lat2, lng2] = coordinates[(i + 1) % n];
         area += (lng1 * lngM) * (lat2 * latM) - (lng2 * lngM) * (lat1 * latM);
     }
-    return Math.abs(area / 2) / 10000; // m² → ha
+    return Math.abs(area / 2) / 10000;
 }
 
-// GEE 10m scale download limit ≈ 32768 px per side
-// At 10m/px → 32768 × 10m = ~327 km per side → ~25,000 ha safe limit
 const MAX_AREA_HA = 25000;
 
 interface MapComponentProps {
     onPolygonChange: (wkt: string | null, areaHa?: number) => void;
+    gridFeatures?: any[];
+    hotspotFeatures?: any[];
 }
 
-// Sub-component that handles map click events
 function DrawingHandler({
     isDrawing,
     onMapClick,
@@ -67,9 +82,18 @@ function DrawingHandler({
     return null;
 }
 
-export default function MapComponent({ onPolygonChange }: MapComponentProps) {
+// Color helper for grid damage score
+function getDamageColor(score: number) {
+    if (score < 0.20) return { color: '#22c55e', label: 'Yok' };       // Green
+    if (score < 0.45) return { color: '#eab308', label: 'Hafif' };     // Yellow
+    if (score < 0.70) return { color: '#f97316', label: 'Orta' };      // Orange
+    return { color: '#ef4444', label: 'Ağır' };                         // Red
+}
+
+export default function MapComponent({ onPolygonChange, gridFeatures = [], hotspotFeatures = [] }: MapComponentProps) {
     const [isDrawing, setIsDrawing] = useState(false);
     const [points, setPoints] = useState<[number, number][]>([]);
+    const [showGridLayer, setShowGridLayer] = useState(true);
 
     const handleMapClick = (lat: number, lng: number) => {
         const newPoints: [number, number][] = [...points, [lat, lng]];
@@ -102,8 +126,19 @@ export default function MapComponent({ onPolygonChange }: MapComponentProps) {
     const areaHa = points.length >= 3 ? calcAreaHa(points) : 0;
     const areaTooLarge = areaHa > MAX_AREA_HA;
 
+    // Build map of hotspot classifications
+    const hotspotMap = React.useMemo(() => {
+        const map: Record<string, any> = {};
+        hotspotFeatures.forEach(h => {
+            if (h.properties && h.properties.h3_index) {
+                map[h.properties.h3_index] = h.properties;
+            }
+        });
+        return map;
+    }, [hotspotFeatures]);
+
     return (
-        <div className="w-full h-full rounded-xl overflow-hidden border border-zinc-700/50 shadow-2xl relative bg-zinc-900">
+        <div className="w-full h-full min-h-[550px] rounded-xl overflow-hidden border border-zinc-700/50 shadow-2xl relative bg-zinc-900 flex flex-col">
             {/* Drawing Toolbar */}
             <div className="absolute top-4 left-4 z-[1000] flex flex-col gap-2 bg-zinc-900/90 p-2.5 rounded-lg border border-zinc-700 shadow-lg backdrop-blur-sm">
                 {!isDrawing && points.length === 0 && (
@@ -152,77 +187,159 @@ export default function MapComponent({ onPolygonChange }: MapComponentProps) {
                         )}
                     </div>
                 )}
+
+                {/* Grid Layer Toggle if results exist */}
+                {gridFeatures.length > 0 && (
+                    <div className="pt-2 border-t border-zinc-700/80 flex items-center justify-between gap-2">
+                        <label className="text-xs text-zinc-300 flex items-center gap-1.5 cursor-pointer select-none">
+                            <input
+                                type="checkbox"
+                                checked={showGridLayer}
+                                onChange={(e) => setShowGridLayer(e.target.checked)}
+                                className="rounded border-zinc-700 bg-zinc-800 text-blue-500 focus:ring-0 cursor-pointer"
+                            />
+                            <span>H3 Grid Katmanı ({gridFeatures.length})</span>
+                        </label>
+                    </div>
+                )}
             </div>
 
-            <MapContainer
-                center={[39.0, 35.0]}
-                zoom={6}
-                style={{ height: '100%', width: '100%' }}
-                attributionControl={false}
-            >
-                <TileLayer
-                    url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-                    maxZoom={18}
-                />
+            {/* Grid Legend Overlay if grid is active */}
+            {gridFeatures.length > 0 && showGridLayer && (
+                <div className="absolute bottom-4 left-4 z-[1000] bg-zinc-950/90 p-2.5 rounded-lg border border-zinc-800 shadow-xl backdrop-blur-sm text-[11px] space-y-1">
+                    <p className="font-semibold text-zinc-300 pb-1 border-b border-zinc-800">H3 Hasar Dağılımı</p>
+                    <div className="flex items-center gap-2">
+                        <span className="w-3 h-3 rounded bg-emerald-500 opacity-80 border border-emerald-400"></span>
+                        <span className="text-zinc-400">Yok (&lt;%20)</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <span className="w-3 h-3 rounded bg-yellow-500 opacity-80 border border-yellow-400"></span>
+                        <span className="text-zinc-400">Hafif (%20 - %45)</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <span className="w-3 h-3 rounded bg-orange-500 opacity-80 border border-orange-400"></span>
+                        <span className="text-zinc-400">Orta (%45 - %70)</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <span className="w-3 h-3 rounded bg-red-500 opacity-80 border border-red-400"></span>
+                        <span className="text-zinc-400">Ağır (&gt;%70)</span>
+                    </div>
+                    <div className="flex items-center gap-2 pt-1 border-t border-zinc-800/80">
+                        <span className="w-3 h-3 rounded border-2 border-red-500 bg-red-950"></span>
+                        <span className="text-red-400 font-medium">🔥 Hotspot Kümesi</span>
+                    </div>
+                </div>
+            )}
 
-                <DrawingHandler isDrawing={isDrawing} onMapClick={handleMapClick} />
-
-                {/* Render polygon when 3+ points */}
-                {points.length >= 3 && (
-                    <Polygon
-                        positions={points}
-                        pathOptions={{
-                            color: areaTooLarge ? '#ef4444' : '#3b82f6',
-                            fillColor: areaTooLarge ? '#ef4444' : '#3b82f6',
-                            fillOpacity: 0.25,
-                            weight: 2,
-                        }}
+            <div className="flex-1 w-full h-full min-h-[550px] relative">
+                <MapContainer
+                    center={[39.0, 35.0]}
+                    zoom={6}
+                    style={{ height: '100%', width: '100%', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+                    attributionControl={false}
+                >
+                    <MapResizeHandler />
+                    <TileLayer
+                        url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+                        maxZoom={18}
                     />
-                )}
 
-                {/* Render lines between points */}
-                {points.length >= 2 && (
-                    <Polyline
-                        positions={[...points, points[0]]}
-                        pathOptions={{
-                            color: areaTooLarge ? '#ef4444' : '#3b82f6',
-                            weight: 2,
-                            dashArray: points.length < 3 ? '5, 10' : undefined,
-                        }}
-                    />
-                )}
+                    <DrawingHandler isDrawing={isDrawing} onMapClick={handleMapClick} />
 
-                {/* Render vertex markers */}
-                {points.map((pos, idx) => (
-                    <Marker
-                        key={idx}
-                        position={pos}
-                        icon={vertexIcon}
-                        draggable={!isDrawing}
-                        eventHandlers={{
-                            drag: (e) => {
-                                // Live update during drag
-                                const latlng = e.target.getLatLng();
-                                setPoints(prev => {
-                                    const newPts = [...prev];
+                    {/* Render polygon when 3+ points */}
+                    {points.length >= 3 && (
+                        <Polygon
+                            positions={points}
+                            pathOptions={{
+                                color: areaTooLarge ? '#ef4444' : '#3b82f6',
+                                fillColor: areaTooLarge ? '#ef4444' : '#3b82f6',
+                                fillOpacity: 0.15,
+                                weight: 2,
+                            }}
+                        />
+                    )}
+
+                    {/* Render lines between points */}
+                    {points.length >= 2 && (
+                        <Polyline
+                            positions={[...points, points[0]]}
+                            pathOptions={{
+                                color: areaTooLarge ? '#ef4444' : '#3b82f6',
+                                weight: 2,
+                                dashArray: points.length < 3 ? '5, 10' : undefined,
+                            }}
+                        />
+                    )}
+
+                    {/* Render vertex markers */}
+                    {points.map((pos, idx) => (
+                        <Marker
+                            key={idx}
+                            position={pos}
+                            icon={vertexIcon}
+                            draggable={!isDrawing}
+                            eventHandlers={{
+                                drag: (e) => {
+                                    const latlng = e.target.getLatLng();
+                                    setPoints(prev => {
+                                        const newPts = [...prev];
+                                        newPts[idx] = [latlng.lat, latlng.lng];
+                                        return newPts;
+                                    });
+                                },
+                                dragend: (e) => {
+                                    const latlng = e.target.getLatLng();
+                                    const newPts = [...points];
                                     newPts[idx] = [latlng.lat, latlng.lng];
-                                    return newPts;
-                                });
-                            },
-                            dragend: (e) => {
-                                // Finalize on drop
-                                const latlng = e.target.getLatLng();
-                                const newPts = [...points];
-                                newPts[idx] = [latlng.lat, latlng.lng];
-                                if (newPts.length >= 3) {
-                                    const ha = calcAreaHa(newPts);
-                                    onPolygonChange(coordsToWkt(newPts), ha);
+                                    if (newPts.length >= 3) {
+                                        const ha = calcAreaHa(newPts);
+                                        onPolygonChange(coordsToWkt(newPts), ha);
+                                    }
                                 }
-                            }
-                        }}
-                    />
-                ))}
-            </MapContainer>
+                            }}
+                        />
+                    ))}
+
+                    {/* Render H3 Hexagonal Grid Cells & Hotspots */}
+                    {showGridLayer && gridFeatures.map((feat, idx) => {
+                        if (!feat.geometry || !feat.geometry.coordinates) return null;
+                        
+                        // GeoJSON Polygon coordinates are [lng, lat], Leaflet expects [lat, lng]
+                        const coords = feat.geometry.coordinates[0].map(([lng, lat]: [number, number]) => [lat, lng]);
+                        const score = feat.properties.damage_score || 0;
+                        const damageInfo = getDamageColor(score);
+                        
+                        const h3Idx = feat.properties.h3_index;
+                        const hs = hotspotMap[h3Idx];
+                        const isHotspot = hs && hs.classification && hs.classification.includes('Hotspot');
+
+                        return (
+                            <Polygon
+                                key={idx}
+                                positions={coords}
+                                pathOptions={{
+                                    color: isHotspot ? '#dc2626' : damageInfo.color,
+                                    fillColor: damageInfo.color,
+                                    fillOpacity: isHotspot ? 0.75 : 0.45,
+                                    weight: isHotspot ? 3 : 1.2,
+                                }}
+                            >
+                                <Tooltip sticky>
+                                    <div className="text-xs space-y-1 p-1">
+                                        <p className="font-mono font-bold text-zinc-900">{h3Idx}</p>
+                                        <p className="text-zinc-700">Hasar Skoru: <span className="font-bold">%{Math.round(score * 100)}</span> ({damageInfo.label})</p>
+                                        {hs && (
+                                            <p className={`font-semibold ${isHotspot ? 'text-red-600' : 'text-zinc-600'}`}>
+                                                {isHotspot ? '🔥 ' : ''}{hs.classification}
+                                            </p>
+                                        )}
+                                    </div>
+                                </Tooltip>
+                            </Polygon>
+                        );
+                    })}
+                </MapContainer>
+            </div>
         </div>
     );
 }

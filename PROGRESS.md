@@ -30,9 +30,16 @@
 - FusionService: rasterio ve numpy kullanarak SAR ve MS GeoTIFF matrislerini piksel duzeyinde birlestirip sonuc hasar GeoTIFF'ini olusturma.
 - Docker ortaminda libexpat1, libgomp1 ve rasterio kurulumu.
 - Kullanici arayuzunde opsiyonel formul agirlik ayarlama paneli.
-- Celery callback'inde fuzyonun otomatik icrasi ve is durumunun aggregating asamasina aktarilmasi.
+
+### Sprint 6: Uzamsal Birikim (H3 Grid & Hotspot Analizi)
+- H3 Hexagonal Grid altyapisi (h3-py, Resolution 9) ve raster zonal istatistik servisi (`GridAggregationService`).
+- Getis-Ord Local G* mekansal otokorelasyon ve afet odak noktasi tespiti (`HotspotService`).
+- `grid_cells` ve `hotspot_results` tablolari ve Alembic migrasyonu (`a8d29f123456`).
+- Celery pipeline'inda otomatik aggregation ve status'un `done` olarak tamamlanmasi.
+- REST API endpoint'leri: `GET /jobs/{id}/results/summary`, `GET /jobs/{id}/results/grid`, `GET /jobs/{id}/results/hotspots`.
+- Frontend arayuzunde ozet kartlari ve grid hucreleri listeleme tablosu (MVP).
 
 ---
 
 ## Siradaki Adim
-- Sprint 6: Sonuclarin Haritada Gosterimi ve Raporlama (Leaflet raster katmani, istatistiksel ozet ve alan bazli hasar raporu).
+- Sprint 7: Export ve Raporlama (GeoTIFF / GeoJSON indirme, PDF hasar raporu).
