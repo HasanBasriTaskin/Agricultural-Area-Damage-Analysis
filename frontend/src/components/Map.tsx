@@ -63,6 +63,7 @@ interface MapComponentProps {
     onPolygonChange: (wkt: string | null, areaHa?: number) => void;
     gridFeatures?: any[];
     hotspotFeatures?: any[];
+    clearKey?: number;
 }
 
 function DrawingHandler({
@@ -90,10 +91,17 @@ function getDamageColor(score: number) {
     return { color: '#ef4444', label: 'Ağır' };                         // Red
 }
 
-export default function MapComponent({ onPolygonChange, gridFeatures = [], hotspotFeatures = [] }: MapComponentProps) {
+export default function MapComponent({ onPolygonChange, gridFeatures = [], hotspotFeatures = [], clearKey = 0 }: MapComponentProps) {
     const [isDrawing, setIsDrawing] = useState(false);
     const [points, setPoints] = useState<[number, number][]>([]);
     const [showGridLayer, setShowGridLayer] = useState(true);
+
+    useEffect(() => {
+        if (clearKey > 0) {
+            setIsDrawing(false);
+            setPoints([]);
+        }
+    }, [clearKey]);
 
     const handleMapClick = (lat: number, lng: number) => {
         const newPoints: [number, number][] = [...points, [lat, lng]];

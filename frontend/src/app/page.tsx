@@ -34,6 +34,9 @@ export default function HomePage() {
   const [aoiName, setAoiName] = useState("");
   const [eventDate, setEventDate] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [isCleaning, setIsCleaning] = useState(false);
+  const [clearKey, setClearKey] = useState(0);
+
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<string | null>(null);
   const [sarStatus, setSarStatus] = useState<string | null>(null);
@@ -77,9 +80,45 @@ export default function HomePage() {
     setAreaHa(ha ?? 0);
   };
 
+  const handleResetAll = () => {
+    setWkt(null);
+    setAoiName("");
+    setEventDate("");
+    setAreaHa(0);
+    setActiveJobId(null);
+    setJobStatus(null);
+    setSarStatus(null);
+    setMsStatus(null);
+    setWeatherStatus(null);
+    setSummaryData(null);
+    setGridData([]);
+    setHotspotData([]);
+    setErrorMessage(null);
+    setClearKey(prev => prev + 1);
+    toast.info("Harita ve analiz paneli sıfırlandı.");
+  };
+
+  const handleStorageCleanup = async () => {
+    setIsCleaning(true);
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const res = await fetch(`${apiUrl}/api/v1/system/cleanup`, { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        toast.success(`Geçici disk dosyaları temizlendi! (${data.freed_mb} MB yer açıldı, ${data.local_files_removed} dosya silindi)`);
+      } else {
+        toast.error("Temizleme işlemi tamamlanamadı.");
+      }
+    } catch (err: any) {
+      toast.error("Temizleme sırasında hata oluştu: " + err.message);
+    } finally {
+      setIsCleaning(false);
+    }
+  };
+
   const handleSave = async () => {
     if (!wkt) {
-      toast.error("Lütfen haritada bir alan (AOI) çizin.");
+      toast.error("Lütfen haritada en az 3 nokta ile bir alan (AOI) çizin.");
       return;
     }
     if (areaHa > MAX_AREA_HA) {
@@ -95,11 +134,21 @@ export default function HomePage() {
       return;
     }
 
+    // 1. Immediately reset previous analysis and clear old grid hexagons
+    setSummaryData(null);
+    setGridData([]);
+    setHotspotData([]);
+    setJobStatus("processing");
+    setSarStatus("pending");
+    setMsStatus("pending");
+    setWeatherStatus("pending");
+    setErrorMessage(null);
     setIsSaving(true);
+
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
-      // 1. Create AOI
+      // 2. Create AOI
       const aoiResponse = await fetch(`${apiUrl}/api/v1/aoi/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -110,7 +159,7 @@ export default function HomePage() {
       const aoiData = await aoiResponse.json();
       toast.success("AOI kaydedildi, Analiz başlatılıyor...");
 
-      // 2. Create Job
+      // 3. Create Job
       const jobResponse = await fetch(`${apiUrl}/api/v1/jobs/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -134,11 +183,14 @@ export default function HomePage() {
       setJobStatus(jobData.status);
       setSarStatus(jobData.sar_status);
       setMsStatus(jobData.ms_status);
+      setWeatherStatus(jobData.weather_status);
       setErrorMessage(null);
       toast.info("Analiz sıraya alındı.");
 
     } catch (error: any) {
       toast.error(error.message);
+      setJobStatus("failed");
+      setErrorMessage(error.message);
       console.error(error);
     } finally {
       setIsSaving(false);
@@ -181,30 +233,61 @@ export default function HomePage() {
                 const hData = await hsRes.json();
                 setHotspotData(hData.features || []);
               }
-            } catch (err) {
-              console.error("Failed to load results", err);
+            } catch (rErr) {
+              console.error("Results fetch error:", rErr);
             }
           } else if (data.status === "failed") {
-            setErrorMessage(data.error_message);
+            setErrorMessage(data.error_message || "Analiz sırasında bir hata oluştu.");
             toast.error("Analiz başarısız oldu.");
           }
         }
-      } catch (e) {
-        console.error("Failed to fetch job status", e);
+      } catch (err) {
+        console.error("Polling error:", err);
       }
-    }, 5000); // Poll every 5 seconds
+    }, 3000);
 
     return () => clearInterval(interval);
   }, [activeJobId, jobStatus]);
 
   return (
     <main className="min-h-screen bg-background text-foreground p-8 flex flex-col">
-      <div className="max-w-7xl mx-auto space-y-8 flex-1 w-full flex flex-col">
-        <header className="space-y-2">
-          <h1 className="text-4xl font-extrabold tracking-tight">SAR + MS Analiz Platformu</h1>
-          <p className="text-muted-foreground text-lg">
-            Tarımsal hasar tespiti için Alan Seçimi (AOI) ve gerçek zamanlı izleme.
-          </p>
+      <div className="max-w-7xl mx-auto space-y-6 flex-1 w-full flex flex-col">
+        {/* Header & Quick Action Buttons */}
+        <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <h1 className="text-3xl font-extrabold tracking-tight text-zinc-100">SAR + MS Tarımsal Hasar Analiz Platformu</h1>
+            <p className="text-muted-foreground text-sm">
+              Çoklu sensör uydu füzyonu, H3 uzamsal birikim ve meteorolojik afet değerlendirme sistemi.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={handleStorageCleanup}
+              disabled={isCleaning}
+              className="px-3.5 py-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-medium text-zinc-300 hover:text-white transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              title="Geçici raster dosyalarını ve disk önbelleğini temizler"
+            >
+              {isCleaning ? (
+                <>
+                  <span className="w-3 h-3 border-2 border-zinc-400 border-t-transparent rounded-full animate-spin" />
+                  Temizleniyor...
+                </>
+              ) : (
+                <>
+                  <span>🗑️</span> Diski & Önbelleği Temizle
+                </>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={handleResetAll}
+              className="px-3.5 py-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-medium text-zinc-300 hover:text-white transition-all flex items-center gap-1.5 cursor-pointer"
+              title="Haritadaki çizimi, hücreleri ve sonuçları sıfırlar"
+            >
+              <span>🧹</span> Haritayı Sıfırla
+            </button>
+          </div>
         </header>
 
         <section className="flex flex-col md:flex-row gap-6 flex-1 h-[calc(100vh-170px)] min-h-[600px] items-stretch">
@@ -214,49 +297,58 @@ export default function HomePage() {
               onPolygonChange={handlePolygonChange}
               gridFeatures={gridData}
               hotspotFeatures={hotspotData}
+              clearKey={clearKey}
             />
           </div>
 
           {/* Sidebar / Form */}
           <div className="w-full md:w-96 flex flex-col gap-4 bg-zinc-900/50 p-6 rounded-xl border border-zinc-800 h-full overflow-y-auto custom-scrollbar">
             <div>
-              <h2 className="text-2xl font-semibold tracking-tight">Yeni Analiz Başlat</h2>
-              <p className="text-sm text-muted-foreground mt-1">Harita üzerinden tarlayı çizin ve tarihi seçin.</p>
+              <h2 className="text-xl font-semibold tracking-tight text-zinc-100">Yeni Analiz Başlat</h2>
+              <p className="text-xs text-muted-foreground mt-1">Harita üzerinden tarlayı çizin ve tarihi seçin.</p>
             </div>
 
-            <div className="space-y-4 mt-4">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">AOI Adı</label>
+            <div className="space-y-4 mt-2">
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-zinc-300">AOI / Tarla Adı</label>
                 <input
                   type="text"
                   value={aoiName}
                   onChange={(e) => setAoiName(e.target.value)}
                   placeholder="Örn: Çukurova Buğday Tarlası"
-                  className="flex h-10 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="flex h-9 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
 
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Olay Tarihi (Afet)</label>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-zinc-300">Olay Tarihi (Afet)</label>
                 <input
                   type="date"
                   value={eventDate}
                   onChange={(e) => setEventDate(e.target.value)}
-                  className="flex h-10 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="flex h-9 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   style={{ colorScheme: 'dark' }}
                 />
               </div>
 
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Seçili Alan (WKT)</label>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-medium text-zinc-300">Seçili Alan (WKT)</label>
+                  {areaHa > 0 && (
+                    <span className="text-[11px] font-semibold text-emerald-400">
+                      {Math.round(areaHa).toLocaleString('tr-TR')} ha
+                    </span>
+                  )}
+                </div>
                 <textarea
                   readOnly
+                  rows={2}
                   value={wkt || "Henüz alan çizilmedi..."}
-                  className="flex min-h-[80px] w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-400 focus:outline-none"
+                  className="flex w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-[11px] text-zinc-400 font-mono focus:outline-none resize-none"
                 />
               </div>
 
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 <button
                   type="button"
                   onClick={() => setShowWeights(!showWeights)}
@@ -266,63 +358,72 @@ export default function HomePage() {
                 </button>
 
                 {showWeights && (
-                  <div className="grid grid-cols-2 gap-3 p-3 bg-zinc-950 border border-zinc-800 rounded-md mt-2">
+                  <div className="grid grid-cols-2 gap-2.5 p-3 bg-zinc-950 border border-zinc-800 rounded-md mt-1.5">
                     <div className="space-y-1">
-                      <label className="text-xs text-zinc-400">SAR Ağırlığı</label>
-                      <input type="number" step="0.01" value={weightSar} onChange={e => setWeightSar(parseFloat(e.target.value) || 0)} className="w-full h-8 rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-300" />
+                      <label className="text-[10px] text-zinc-400">SAR Ağırlığı</label>
+                      <input type="number" step="0.01" value={weightSar} onChange={e => setWeightSar(parseFloat(e.target.value) || 0)} className="w-full h-7 rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-300" />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-xs text-zinc-400">NDMI Ağırlığı</label>
-                      <input type="number" step="0.01" value={weightNdmi} onChange={e => setWeightNdmi(parseFloat(e.target.value) || 0)} className="w-full h-8 rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-300" />
+                      <label className="text-[10px] text-zinc-400">NDMI Ağırlığı</label>
+                      <input type="number" step="0.01" value={weightNdmi} onChange={e => setWeightNdmi(parseFloat(e.target.value) || 0)} className="w-full h-7 rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-300" />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-xs text-zinc-400">NDRE Ağırlığı</label>
-                      <input type="number" step="0.01" value={weightNdre} onChange={e => setWeightNdre(parseFloat(e.target.value) || 0)} className="w-full h-8 rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-300" />
+                      <label className="text-[10px] text-zinc-400">NDRE Ağırlığı</label>
+                      <input type="number" step="0.01" value={weightNdre} onChange={e => setWeightNdre(parseFloat(e.target.value) || 0)} className="w-full h-7 rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-300" />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-xs text-zinc-400">Yağış Ağırlığı</label>
-                      <input type="number" step="0.01" value={weightPrecip} onChange={e => setWeightPrecip(parseFloat(e.target.value) || 0)} className="w-full h-8 rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-300" />
+                      <label className="text-[10px] text-zinc-400">Yağış Ağırlığı</label>
+                      <input type="number" step="0.01" value={weightPrecip} onChange={e => setWeightPrecip(parseFloat(e.target.value) || 0)} className="w-full h-7 rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-300" />
                     </div>
                     <div className="space-y-1 col-span-2">
-                      <label className="text-xs text-zinc-400">Toprak Nemi Ağırlığı</label>
-                      <input type="number" step="0.01" value={weightSm} onChange={e => setWeightSm(parseFloat(e.target.value) || 0)} className="w-full h-8 rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-300" />
+                      <label className="text-[10px] text-zinc-400">Toprak Nemi Ağırlığı</label>
+                      <input type="number" step="0.01" value={weightSm} onChange={e => setWeightSm(parseFloat(e.target.value) || 0)} className="w-full h-7 rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-300" />
                     </div>
                   </div>
                 )}
               </div>
 
-              <button 
-                onClick={handleSave}
-                disabled={isSaving || !wkt || areaHa > MAX_AREA_HA || (activeJobId !== null && jobStatus !== 'done' && jobStatus !== 'failed')}
-                className="w-full h-10 inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:pointer-events-none"
-              >
-                {isSaving ? "İşleniyor..." : "Analizi Başlat"}
-              </button>
+              <div className="flex gap-2 pt-1">
+                <button 
+                  onClick={handleSave}
+                  disabled={isSaving || !wkt || areaHa > MAX_AREA_HA || (activeJobId !== null && jobStatus !== 'done' && jobStatus !== 'failed')}
+                  className="flex-1 h-10 inline-flex items-center justify-center whitespace-nowrap rounded-md text-xs font-semibold transition-colors bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:pointer-events-none cursor-pointer"
+                >
+                  {isSaving ? "Analiz Başlatılıyor..." : "🚀 Analizi Başlat"}
+                </button>
+                <button 
+                  type="button"
+                  onClick={handleResetAll}
+                  className="px-3 h-10 inline-flex items-center justify-center rounded-md text-xs font-medium text-zinc-400 bg-zinc-800 hover:bg-zinc-700 hover:text-white transition-colors cursor-pointer"
+                  title="Temizle"
+                >
+                  Temizle
+                </button>
+              </div>
 
               {/* Area too large warning */}
               {wkt && areaHa > MAX_AREA_HA && (
-                <div className="p-3 bg-amber-950/40 border border-amber-700/60 rounded-lg">
-                  <p className="text-xs text-amber-300 font-medium">⚠️ Alan Sınırı Aşıldı</p>
-                  <p className="text-xs text-amber-400/80 mt-1">
+                <div className="p-3 bg-red-950/40 border border-red-700/60 rounded-lg">
+                  <p className="text-xs text-red-300 font-medium">⚠️ Alan Sınırı Aşıldı</p>
+                  <p className="text-[11px] text-red-400/90 mt-1">
                     Seçilen alan <strong>{Math.round(areaHa).toLocaleString('tr-TR')} ha</strong>.
-                    GEE indirme limiti nedeniyle maksimum <strong>~{MAX_AREA_HA.toLocaleString('tr-TR')} ha</strong> desteklenmektedir.
-                    Lütfen haritada daha küçük bir alan çizin.
+                    Maksimum <strong>~{MAX_AREA_HA.toLocaleString('tr-TR')} ha</strong> desteklenmektedir.
                   </p>
                 </div>
               )}
 
               {/* Status Tracking */}
               {activeJobId && (
-                <div className="mt-6 p-4 rounded-lg bg-zinc-950 border border-zinc-800">
-                  <h3 className="text-sm font-medium text-zinc-400 mb-2">İşlem Durumu</h3>
+                <div className="mt-4 p-4 rounded-lg bg-zinc-950 border border-zinc-800">
+                  <h3 className="text-xs font-semibold text-zinc-400 mb-2">İşlem Durumu</h3>
                   <div className="flex items-center justify-between">
-                    <span className={`text-sm font-bold uppercase tracking-wider ${jobStatus === 'failed' ? 'text-red-500' : 'text-white'}`}>
+                    <span className={`text-sm font-bold uppercase tracking-wider ${jobStatus === 'failed' ? 'text-red-500' : jobStatus === 'done' ? 'text-green-400' : 'text-blue-400'}`}>
                       {jobStatus || "BİLİNMİYOR"}
                     </span>
                     {jobStatus !== "done" && jobStatus !== "failed" && (
-                      <span className="flex h-3 w-3">
-                        <span className="animate-ping absolute inline-flex h-3 w-3 rounded-full bg-blue-400 opacity-75"></span>
-                        <span className="relative inline-flex rounded-full h-3 w-3 bg-blue-500"></span>
+                      <span className="flex h-2.5 w-2.5 relative">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-500"></span>
                       </span>
                     )}
                   </div>
@@ -336,12 +437,12 @@ export default function HomePage() {
                   {/* Weather Pipeline row */}
                   <PipelineRow label="🌤️ Weather Pipeline" status={weatherStatus} />
 
-                  <p className="text-xs text-zinc-500 mt-2 truncate" title={activeJobId}>
+                  <p className="text-[10px] text-zinc-500 mt-2 truncate font-mono" title={activeJobId}>
                     ID: {activeJobId}
                   </p>
                   {jobStatus === 'failed' && errorMessage && (
-                    <div className="mt-3 p-3 bg-red-950/30 border border-red-900/50 rounded-md">
-                      <p className="text-xs text-red-400 break-words font-mono">
+                    <div className="mt-3 p-2.5 bg-red-950/30 border border-red-900/50 rounded-md">
+                      <p className="text-[11px] text-red-400 break-words font-mono">
                         {errorMessage}
                       </p>
                     </div>
@@ -356,21 +457,21 @@ export default function HomePage() {
                       </div>
 
                       <div className="grid grid-cols-2 gap-2">
-                        <div className="p-2.5 bg-zinc-900 rounded border border-zinc-800">
+                        <div className="p-2 bg-zinc-900 rounded border border-zinc-800">
                           <p className="text-[10px] text-zinc-400">Ortalama Hasar</p>
-                          <p className="text-base font-bold text-amber-400">%{Math.round(summaryData.mean_damage_score * 100)}</p>
+                          <p className="text-sm font-bold text-amber-400">%{Math.round(summaryData.mean_damage_score * 100)}</p>
                         </div>
-                        <div className="p-2.5 bg-zinc-900 rounded border border-zinc-800">
-                          <p className="text-[10px] text-zinc-400">Toplam Grid Hücresi</p>
-                          <p className="text-base font-bold text-zinc-200">{summaryData.total_cells}</p>
+                        <div className="p-2 bg-zinc-900 rounded border border-zinc-800">
+                          <p className="text-[10px] text-zinc-400">Toplam Grid</p>
+                          <p className="text-sm font-bold text-zinc-200">{summaryData.total_cells}</p>
                         </div>
-                        <div className="p-2.5 bg-zinc-900 rounded border border-zinc-800">
+                        <div className="p-2 bg-zinc-900 rounded border border-zinc-800">
                           <p className="text-[10px] text-zinc-400">🔥 Hotspot Odak</p>
-                          <p className="text-base font-bold text-red-400">{summaryData.hotspot_cells_count}</p>
+                          <p className="text-sm font-bold text-red-400">{summaryData.hotspot_cells_count}</p>
                         </div>
-                        <div className="p-2.5 bg-zinc-900 rounded border border-zinc-800">
-                          <p className="text-[10px] text-zinc-400">❄️ Coldspot (Güvenli)</p>
-                          <p className="text-base font-bold text-emerald-400">{summaryData.coldspot_cells_count}</p>
+                        <div className="p-2 bg-zinc-900 rounded border border-zinc-800">
+                          <p className="text-[10px] text-zinc-400">❄️ Coldspot</p>
+                          <p className="text-sm font-bold text-emerald-400">{summaryData.coldspot_cells_count}</p>
                         </div>
                       </div>
 
