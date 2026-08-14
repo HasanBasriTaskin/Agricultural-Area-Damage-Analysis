@@ -298,6 +298,8 @@ export default function HomePage() {
               gridFeatures={gridData}
               hotspotFeatures={hotspotData}
               clearKey={clearKey}
+              isAnalyzing={isSaving || (activeJobId !== null && jobStatus === 'processing')}
+              onResetAll={handleResetAll}
             />
           </div>
 

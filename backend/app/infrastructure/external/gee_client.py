@@ -138,18 +138,43 @@ class GEESatelliteClient(ISatelliteDataClient):
         # büyük alan desteği için backend tile-split mimarisine geçilmesi gerekiyor.
         """
         roi = self._geometry_to_ee_feature(aoi_wkt)
-        url = image.getDownloadURL({
-            'scale': scale,
-            'region': roi,
-            'format': 'GEO_TIFF'
-        })
+        
+        # Adaptive download with automatic resolution scaling to prevent 48MB GEE limit
+        url = None
+        attempt_scale = scale
+        scale_steps = [scale, max(scale, 15), max(scale, 20), max(scale, 30), max(scale, 45), 60]
+        unique_scales = list(dict.fromkeys(scale_steps))
+
+        last_err = None
+        for s in unique_scales:
+            try:
+                url = image.getDownloadURL({
+                    'scale': s,
+                    'region': roi,
+                    'format': 'GEO_TIFF'
+                })
+                if url:
+                    attempt_scale = s
+                    break
+            except Exception as e:
+                err_msg = str(e).lower()
+                last_err = e
+                if "request size" in err_msg or "must be less than" in err_msg or "too large" in err_msg or "pixel" in err_msg:
+                    continue
+                else:
+                    raise e
+
+        if not url:
+            if last_err:
+                raise last_err
+            raise RuntimeError("Failed to obtain download URL from Earth Engine.")
         
         import requests
         import uuid
         import os
         from app.infrastructure.external.minio_client import MinioStorageClient
         
-        response = requests.get(url)
+        response = requests.get(url, timeout=120)
         response.raise_for_status()
         
         os.makedirs('temp_downloads', exist_ok=True)

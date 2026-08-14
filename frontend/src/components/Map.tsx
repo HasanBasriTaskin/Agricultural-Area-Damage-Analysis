@@ -64,6 +64,8 @@ interface MapComponentProps {
     gridFeatures?: any[];
     hotspotFeatures?: any[];
     clearKey?: number;
+    isAnalyzing?: boolean;
+    onResetAll?: () => void;
 }
 
 function DrawingHandler({
@@ -91,7 +93,14 @@ function getDamageColor(score: number) {
     return { color: '#ef4444', label: 'Ağır' };                         // Red
 }
 
-export default function MapComponent({ onPolygonChange, gridFeatures = [], hotspotFeatures = [], clearKey = 0 }: MapComponentProps) {
+export default function MapComponent({
+    onPolygonChange,
+    gridFeatures = [],
+    hotspotFeatures = [],
+    clearKey = 0,
+    isAnalyzing = false,
+    onResetAll
+}: MapComponentProps) {
     const [isDrawing, setIsDrawing] = useState(false);
     const [points, setPoints] = useState<[number, number][]>([]);
     const [showGridLayer, setShowGridLayer] = useState(true);
@@ -102,6 +111,12 @@ export default function MapComponent({ onPolygonChange, gridFeatures = [], hotsp
             setPoints([]);
         }
     }, [clearKey]);
+
+    useEffect(() => {
+        if (isAnalyzing) {
+            setIsDrawing(false);
+        }
+    }, [isAnalyzing]);
 
     const handleMapClick = (lat: number, lng: number) => {
         const newPoints: [number, number][] = [...points, [lat, lng]];
@@ -119,6 +134,9 @@ export default function MapComponent({ onPolygonChange, gridFeatures = [], hotsp
         setIsDrawing(true);
         setPoints([]);
         onPolygonChange(null, 0);
+        if (onResetAll) {
+            onResetAll();
+        }
     };
 
     const handleFinish = () => {
@@ -129,6 +147,9 @@ export default function MapComponent({ onPolygonChange, gridFeatures = [], hotsp
         setIsDrawing(false);
         setPoints([]);
         onPolygonChange(null, 0);
+        if (onResetAll) {
+            onResetAll();
+        }
     };
 
     const areaHa = points.length >= 3 ? calcAreaHa(points) : 0;
