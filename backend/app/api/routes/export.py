@@ -70,17 +70,44 @@ async def export_pdf_report(
     hotspot_count = sum(1 for h in hotspots if "Hotspot" in (h.classification or ""))
     coldspot_count = sum(1 for h in hotspots if "Coldspot" in (h.classification or ""))
 
+    weather_dict = {
+        "precipitation_mm": weather.precipitation_mm if weather else 0.0,
+        "soil_moisture_m3_m3": weather.soil_moisture_m3_m3 if weather else 0.0,
+        "wind_speed_kmh": 0.0,
+        "temperature_max_c": None,
+        "temperature_min_c": None,
+        "temperature_mean_c": None,
+        "is_anomaly": weather.is_anomaly if weather else False
+    }
+
+    if aoi:
+        try:
+            import shapely.wkt
+            from datetime import timedelta, date
+            from app.infrastructure.external.openmeteo_client import OpenMeteoClient
+            from app.application.services.weather_verification_service import WeatherVerificationService
+            geom_aoi = shapely.wkt.loads(aoi.geometry)
+            cent = geom_aoi.centroid
+            ev_date = job.event_date if isinstance(job.event_date, date) else job.event_date.date()
+            client = OpenMeteoClient()
+            raw_w = await client.get_historical_weather(
+                lat=cent.y,
+                lon=cent.x,
+                start_date=ev_date - timedelta(days=5),
+                end_date=ev_date
+            )
+            v_service = WeatherVerificationService()
+            weather_dict = v_service.verify(raw_w)
+        except Exception:
+            pass
+
     summary_data = {
         "total_cells": len(cells),
         "mean_damage_score": mean_score,
         "distribution": distribution,
         "hotspot_cells_count": hotspot_count,
         "coldspot_cells_count": coldspot_count,
-        "weather": {
-            "precipitation_mm": weather.precipitation_mm if weather else 0.0,
-            "soil_moisture_m3_m3": weather.soil_moisture_m3_m3 if weather else 0.0,
-            "is_anomaly": weather.is_anomaly if weather else False
-        } if weather else None
+        "weather": weather_dict
     }
 
     # Calculate approx area in ha

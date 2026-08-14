@@ -2,6 +2,7 @@ import io
 import os
 import uuid
 import math
+import urllib.request
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
@@ -9,6 +10,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+from PIL import Image as PILImage
 import shapely.wkt
 from geoalchemy2.shape import to_shape
 
@@ -60,10 +62,61 @@ def _register_turkish_fonts():
         except Exception:
             pass
 
+def _deg2num(lat_deg: float, lon_deg: float, zoom: int):
+    lat_rad = math.radians(lat_deg)
+    n = 2.0 ** zoom
+    xtile = int((lon_deg + 180.0) / 360.0 * n)
+    ytile = int((1.0 - math.asinh(math.tan(lat_rad)) / math.pi) / 2.0 * n)
+    return (xtile, ytile)
+
+def _num2deg(xtile: int, ytile: int, zoom: int):
+    n = 2.0 ** zoom
+    lon_deg = xtile / n * 360.0 - 180.0
+    lat_rad = math.atan(math.sinh(math.pi * (1 - 2 * ytile / n)))
+    lat_deg = math.degrees(lat_rad)
+    return (lat_deg, lon_deg)
+
 class PdfReportService:
     def __init__(self, minio_client: Optional[MinioStorageClient] = None):
         self.minio_client = minio_client or MinioStorageClient()
         _register_turkish_fonts()
+
+    def _fetch_satellite_basemap(self, min_lat: float, max_lat: float, min_lon: float, max_lon: float, zoom: int = 15):
+        """
+        Downloads and stitches real Esri World Imagery satellite basemap tiles.
+        """
+        try:
+            x_min, y_min = _deg2num(max_lat, min_lon, zoom)
+            x_max, y_max = _deg2num(min_lat, max_lon, zoom)
+
+            # Safeguard maximum tiles to 16
+            if (x_max - x_min + 1) * (y_max - y_min + 1) > 20:
+                zoom = max(11, zoom - 2)
+                x_min, y_min = _deg2num(max_lat, min_lon, zoom)
+                x_max, y_max = _deg2num(min_lat, max_lon, zoom)
+
+            width = (x_max - x_min + 1) * 256
+            height = (y_max - y_min + 1) * 256
+            stitched = PILImage.new('RGB', (width, height), (15, 23, 42))
+
+            req_headers = {'User-Agent': 'AgriculturalDamageAnalysis/1.0'}
+            for x in range(x_min, x_max + 1):
+                for y in range(y_min, y_max + 1):
+                    try:
+                        url = f'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{zoom}/{y}/{x}'
+                        req = urllib.request.Request(url, headers=req_headers)
+                        with urllib.request.urlopen(req, timeout=3.0) as resp:
+                            tile = PILImage.open(io.BytesIO(resp.read()))
+                            stitched.paste(tile, ((x - x_min) * 256, (y - y_min) * 256))
+                    except Exception:
+                        pass
+
+            nw_lat, nw_lon = _num2deg(x_min, y_min, zoom)
+            se_lat, se_lon = _num2deg(x_max + 1, y_max + 1, zoom)
+
+            return stitched, (nw_lon, se_lon, se_lat, nw_lat)
+        except Exception:
+            return None, None
 
     def _generate_map_snapshot(
         self,
@@ -72,17 +125,58 @@ class PdfReportService:
         hotspots: Optional[List[Any]] = None
     ) -> Optional[io.BytesIO]:
         """
-        Renders a high-resolution map snapshot with AOI boundary, H3 hexagons and Hotspots.
+        Renders a high-resolution map snapshot with real satellite background, AOI boundary, H3 hexagons and Hotspots.
         """
         if not cells and not aoi_wkt:
             return None
 
         try:
+            # 1. Calculate Bounds
+            min_lon, min_lat, max_lon, max_lat = 180, 90, -180, -90
+
+            if aoi_wkt:
+                try:
+                    aoi_geom = shapely.wkt.loads(aoi_wkt)
+                    b = aoi_geom.bounds
+                    min_lon, min_lat, max_lon, max_lat = b[0], b[1], b[2], b[3]
+                except Exception:
+                    pass
+
+            if min_lon > max_lon:
+                for c in cells:
+                    geom = to_shape(c.geometry) if hasattr(c, 'geometry') else None
+                    if geom:
+                        b = geom.bounds
+                        min_lon = min(min_lon, b[0])
+                        min_lat = min(min_lat, b[1])
+                        max_lon = max(max_lon, b[2])
+                        max_lat = max(max_lat, b[3])
+
+            if min_lon > max_lon:
+                min_lon, min_lat, max_lon, max_lat = 30.91, 40.69, 30.93, 40.71
+
+            # Pad bounding box
+            pad_x = max(0.002, (max_lon - min_lon) * 0.15)
+            pad_y = max(0.002, (max_lat - min_lat) * 0.15)
+
+            # 2. Fetch Real Satellite Tiles
+            stitched_img, ext = self._fetch_satellite_basemap(
+                min_lat=min_lat - pad_y,
+                max_lat=max_lat + pad_y,
+                min_lon=min_lon - pad_x,
+                max_lon=max_lon + pad_x,
+                zoom=15
+            )
+
             fig, ax = plt.subplots(figsize=(7, 3.8), dpi=160)
             ax.set_facecolor('#0f172a')
             fig.patch.set_facecolor('#0f172a')
 
-            # Hotspots set for fast check
+            # Render Satellite Basemap
+            if stitched_img and ext:
+                ax.imshow(stitched_img, extent=[ext[0], ext[1], ext[2], ext[3]], aspect='auto', zorder=1)
+
+            # Hotspots set
             hs_set = set()
             if hotspots:
                 for h in hotspots:
@@ -97,7 +191,7 @@ class PdfReportService:
                 "Ağır": "#ef4444"
             }
 
-            # 1. Plot H3 Hexagons
+            # 3. Plot H3 Hexagons with semi-transparency over satellite
             for cell in cells:
                 geom = to_shape(cell.geometry) if hasattr(cell, 'geometry') else None
                 if geom and geom.geom_type == 'Polygon':
@@ -105,25 +199,28 @@ class PdfReportService:
                     cls = cell.damage_class or "Yok"
                     fc = color_map.get(cls, "#22c55e")
                     is_hs = cell.h3_index in hs_set
-                    ec = '#dc2626' if is_hs else '#334155'
-                    lw = 2.2 if is_hs else 0.8
-                    ax.fill(x, y, alpha=0.85, fc=fc, ec=ec, lw=lw, zorder=3)
+                    ec = '#dc2626' if is_hs else '#ffffff'
+                    lw = 2.4 if is_hs else 0.6
+                    alpha = 0.65 if is_hs else 0.52
+                    ax.fill(x, y, alpha=alpha, fc=fc, ec=ec, lw=lw, zorder=3)
 
-            # 2. Plot AOI boundary
+            # 4. Plot AOI boundary
             if aoi_wkt:
                 try:
                     aoi_geom = shapely.wkt.loads(aoi_wkt)
                     if aoi_geom.geom_type == 'Polygon':
                         bx, by = aoi_geom.exterior.xy
-                        ax.plot(bx, by, color='#38bdf8', linestyle='--', linewidth=2.0, label='Seçili AOI Sınırı', zorder=4)
+                        ax.plot(bx, by, color='#38bdf8', linestyle='--', linewidth=2.2, label='AOI Sınırı', zorder=5)
                     elif aoi_geom.geom_type == 'MultiPolygon':
                         for poly in aoi_geom.geoms:
                             bx, by = poly.exterior.xy
-                            ax.plot(bx, by, color='#38bdf8', linestyle='--', linewidth=2.0, zorder=4)
+                            ax.plot(bx, by, color='#38bdf8', linestyle='--', linewidth=2.2, zorder=5)
                 except Exception:
                     pass
 
-            ax.set_title("Mekânsal Hasar Dağılımı ve H3 Grid Haritası", color='#f8fafc', fontsize=10, fontweight='bold', pad=8)
+            ax.set_xlim(min_lon - pad_x, max_lon + pad_x)
+            ax.set_ylim(min_lat - pad_y, max_lat + pad_y)
+            ax.set_title("Mekânsal Hasar Dağılımı ve H3 Grid Haritası (Uydu Altlığı)", color='#f8fafc', fontsize=9.5, fontweight='bold', pad=6)
             ax.axis('off')
 
             # Legend Patches
@@ -131,24 +228,25 @@ class PdfReportService:
             p_hafif = mpatches.Patch(color='#eab308', label='Hafif (%20-%45)')
             p_orta = mpatches.Patch(color='#f97316', label='Orta (%45-%70)')
             p_agir = mpatches.Patch(color='#ef4444', label='Ağır (>%70)')
-            p_hs = mpatches.Patch(facecolor='none', edgecolor='#dc2626', linewidth=2, label='🔥 Hotspot')
+            p_hs = mpatches.Patch(facecolor='#ef4444', edgecolor='#dc2626', linewidth=2, label='🔥 Hotspot')
+            p_aoi = mpatches.Patch(facecolor='none', edgecolor='#38bdf8', linestyle='--', linewidth=1.5, label='AOI Sınırı')
 
             legend = ax.legend(
-                handles=[p_yok, p_hafif, p_orta, p_agir, p_hs],
+                handles=[p_yok, p_hafif, p_orta, p_agir, p_hs, p_aoi],
                 loc='lower left',
-                facecolor='#1e293b',
-                edgecolor='#475569',
+                facecolor='#0f172a',
+                edgecolor='#334155',
                 labelcolor='#f8fafc',
-                fontsize=7.5,
-                framealpha=0.9
+                fontsize=7,
+                framealpha=0.88
             )
 
             buf = io.BytesIO()
-            plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0.1, facecolor=fig.get_facecolor())
+            plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0.04, facecolor=fig.get_facecolor())
             plt.close(fig)
             buf.seek(0)
             return buf
-        except Exception as e:
+        except Exception:
             return None
 
     def generate_damage_report(
@@ -165,7 +263,7 @@ class PdfReportService:
         aoi_wkt: Optional[str] = None
     ) -> bytes:
         """
-        Generates a formal, beautiful, multi-section A4 PDF Damage Assessment Report with Map Visual and Full Weather details.
+        Generates a formal, beautiful, multi-section A4 PDF Damage Assessment Report with Real Satellite Map Visual and Full Weather details.
         """
         _register_turkish_fonts()
 
@@ -178,8 +276,8 @@ class PdfReportService:
             pagesize=A4,
             leftMargin=36,
             rightMargin=36,
-            topMargin=32,
-            bottomMargin=32
+            topMargin=28,
+            bottomMargin=28
         )
 
         styles = getSampleStyleSheet()
@@ -246,12 +344,12 @@ class PdfReportService:
         meta_table = Table(meta_table_data, colWidths=[200, 160, 160])
         meta_table.setStyle(TableStyle([
             ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#f8fafc')),
-            ('PADDING', (0,0), (-1,-1), 5),
+            ('PADDING', (0,0), (-1,-1), 4),
             ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
             ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
         ]))
         story.append(meta_table)
-        story.append(Spacer(1, 8))
+        story.append(Spacer(1, 6))
 
         # 2. General Info & AOI Table
         story.append(Paragraph("1. Çalışma Alanı (AOI) ve Afet Bilgileri", section_heading))
@@ -268,12 +366,12 @@ class PdfReportService:
             ('TEXTCOLOR', (0,0), (-1,-1), colors.HexColor('#0f172a')),
             ('FONTNAME', (0,0), (-1,-1), font_norm),
             ('FONTSIZE', (0,0), (-1,-1), 8),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 4),
-            ('TOPPADDING', (0,0), (-1,-1), 4),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 3.5),
+            ('TOPPADDING', (0,0), (-1,-1), 3.5),
             ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#e2e8f0')),
         ]))
         story.append(info_table)
-        story.append(Spacer(1, 8))
+        story.append(Spacer(1, 6))
 
         # 3. Weather & Meteorological Verification (Enhanced with Temperature & Humidity)
         story.append(Paragraph("2. Meteorolojik Doğrulama, Sıcaklık ve Nem Göstergeleri", section_heading))
@@ -286,12 +384,16 @@ class PdfReportService:
         t_mean = weather.get('temperature_mean_c')
         is_anomaly = weather.get('is_anomaly', False)
 
-        temp_str = f"Maks: {t_max}°C / Min: {t_min}°C (Ort: {t_mean}°C)" if t_max is not None else "Ölçüm Alındı"
+        if t_max is not None and t_min is not None:
+            temp_str = f"Maks: {t_max}°C / Min: {t_min}°C (Ort: {t_mean}°C)"
+        else:
+            temp_str = "Mevsim Normalleri"
+
         anomaly_text = "<font color='#dc2626'><b>EKSTREM AFET ANOMALİSİ TESPİT EDİLDİ</b></font>" if is_anomaly else "<font color='#16a34a'><b>Normal Meteorolojik Seviye</b></font>"
 
         weather_table_data = [
             ["Meteorolojik Parametre", "Ölçülen Değer", "Referans / Eşik", "Değerlendirme"],
-            ["Hava Sıcaklığı (2m)", temp_str, "Mevsim Normalleri", "İklim Verisi"],
+            ["Hava Sıcaklığı (2m)", temp_str, "15°C - 35°C (Normal)", "İklim Verisi"],
             ["Toplam Yağış (mm)", f"{round(float(precip), 1)} mm", "> 30 mm (Aşırı Yağış)", "Afet Tetikleyici" if precip > 30 else "Normal"],
             ["Toprak Yüzey Nemi (0-7cm)", f"{round(float(sm), 3)} m³/m³", "> 0.35 (Doygun)", "Aşırı Doygun" if sm > 0.35 else "Normal"],
             ["Maksimum Rüzgar Hızı", f"{round(float(wind), 1)} km/h" if wind else "12.4 km/h", "> 60 km/h (Fırtına)", "Normal Rüzgar"],
@@ -305,19 +407,19 @@ class PdfReportService:
             ('FONTNAME', (0,1), (-1,-1), font_norm),
             ('FONTSIZE', (0,0), (-1,-1), 8),
             ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
-            ('PADDING', (0,0), (-1,-1), 4),
+            ('PADDING', (0,0), (-1,-1), 3.5),
             ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f8fafc')])
         ]))
         story.append(weather_table)
-        story.append(Spacer(1, 8))
+        story.append(Spacer(1, 6))
 
-        # 4. Map Visual Snapshot
+        # 4. Real Satellite Map Visual Snapshot
         if cells or aoi_wkt:
             map_img_buf = self._generate_map_snapshot(cells or [], aoi_wkt, hotspots or [])
             if map_img_buf:
                 story.append(Paragraph("3. Uydu Tabanlı Mekânsal Hasar Haritası", section_heading))
                 story.append(Image(map_img_buf, width=520, height=210))
-                story.append(Spacer(1, 8))
+                story.append(Spacer(1, 6))
 
         # 5. Damage Distribution & Pie Chart
         story.append(Paragraph("4. Hasar Dağılımı ve Şiddet Sınıflandırması", section_heading))
@@ -377,7 +479,7 @@ class PdfReportService:
             ('ALIGN', (1,0), (1,0), 'CENTER'),
         ]))
         story.append(dist_and_chart)
-        story.append(Spacer(1, 8))
+        story.append(Spacer(1, 6))
 
         # 6. Hotspots & Spatial Concentration
         story.append(Paragraph("5. Mekânsal Kümelenme ve Odak Noktaları (Getis-Ord G*)", section_heading))
@@ -398,11 +500,11 @@ class PdfReportService:
             ('FONTNAME', (0,1), (-1,-1), font_norm),
             ('FONTSIZE', (0,0), (-1,-1), 8),
             ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
-            ('PADDING', (0,0), (-1,-1), 4),
+            ('PADDING', (0,0), (-1,-1), 3.5),
             ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f8fafc')])
         ]))
         story.append(hs_table)
-        story.append(Spacer(1, 8))
+        story.append(Spacer(1, 6))
 
         # 7. Methodology & Weights
         story.append(Paragraph("6. Analiz Metodolojisi ve Ağırlık Katsayıları", section_heading))
