@@ -20,7 +20,7 @@ class OpenMeteoClient:
             "longitude": lon,
             "start_date": start_date.strftime("%Y-%m-%d"),
             "end_date": end_date.strftime("%Y-%m-%d"),
-            "daily": "precipitation_sum,wind_speed_10m_max,soil_moisture_0_to_7cm_mean",
+            "daily": "precipitation_sum,wind_speed_10m_max,soil_moisture_0_to_7cm_mean,temperature_2m_max,temperature_2m_min,temperature_2m_mean",
             "timezone": "auto"
         }
         

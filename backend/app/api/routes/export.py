@@ -106,7 +106,10 @@ async def export_pdf_report(
         event_date=job.event_date.strftime("%d.%m.%Y") if hasattr(job.event_date, 'strftime') else str(job.event_date),
         summary_data=summary_data,
         weather_data=summary_data["weather"],
-        weights=job.weights
+        weights=job.weights,
+        cells=cells,
+        hotspots=hotspots,
+        aoi_wkt=aoi.geometry if aoi else None
     )
 
     return Response(
