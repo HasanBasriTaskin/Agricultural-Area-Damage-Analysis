@@ -113,7 +113,7 @@ async def _run_sar_pipeline_async(job_id: uuid.UUID) -> str:
     except Exception as e:
         logger.error(f"Pipeline failed for job {job_id}: {e}", exc_info=True)
         try:
-            await _update_job_status(session_factory, job_id, status="failed", sar_status="failed", error_message=str(e)[:500])
+            await _update_job_status(session_factory, job_id, sar_status="failed")
         except Exception as update_err:
             logger.error(f"Failed to update job status to failed: {update_err}")
         raise
@@ -176,7 +176,7 @@ async def _run_ms_pipeline_async(job_id: uuid.UUID) -> str:
     except Exception as e:
         logger.error(f"MS Pipeline failed for job {job_id}: {e}", exc_info=True)
         try:
-            await _update_job_status(session_factory, job_id, status="failed", ms_status="failed", error_message=str(e)[:500])
+            await _update_job_status(session_factory, job_id, ms_status="failed")
         except Exception as update_err:
             pass
         raise
@@ -205,7 +205,8 @@ async def _finalize_job_async(job_id: uuid.UUID, results: list) -> None:
         # Check if any failed
         failed = [r for r in results if r.get("status") == "FAILED"]
         if failed:
-            await _update_job_status(session_factory, job_id, status="failed", error_message="One or more pipelines failed.")
+            error_msgs = " | ".join([f"{r.get('pipeline')}: {r.get('error')}" for r in failed])
+            await _update_job_status(session_factory, job_id, status="failed", error_message=error_msgs[:500])
         else:
             await _update_job_status(session_factory, job_id, status="done")
     finally:

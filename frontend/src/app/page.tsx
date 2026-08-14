@@ -14,7 +14,7 @@ function statusColor(status: string | null) {
 function PipelineRow({ label, status }: { label: string; status: string | null }) {
   const isRunning = status && status !== 'done' && status !== 'failed';
   return (
-    <div className="flex items-center justify-between py-1.5 border-t border-zinc-800/60">
+    <div className="flex items-center justify-between py-1.5 border-t border-zinc-800/60 mt-2">
       <span className="text-xs text-zinc-400">{label}</span>
       <div className="flex items-center gap-2">
         {isRunning && (
@@ -81,7 +81,7 @@ export default function HomePage() {
     setIsSaving(true);
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      
+
       // 1. Create AOI
       const aoiResponse = await fetch(`${apiUrl}/api/v1/aoi/`, {
         method: 'POST',
@@ -105,7 +105,7 @@ export default function HomePage() {
 
       if (!jobResponse.ok) throw new Error("Analiz işi başlatılamadı.");
       const jobData = await jobResponse.json();
-      
+
       setActiveJobId(jobData.id);
       setJobStatus(jobData.status);
       setSarStatus(jobData.sar_status);
@@ -163,7 +163,7 @@ export default function HomePage() {
         <section className="flex flex-col md:flex-row gap-6 flex-1 min-h-[600px]">
           {/* Map Area */}
           <div className="flex-1 rounded-xl relative">
-             <MapComponent onPolygonChange={handlePolygonChange} />
+            <MapComponent onPolygonChange={handlePolygonChange} />
           </div>
 
           {/* Sidebar / Form */}
@@ -172,12 +172,12 @@ export default function HomePage() {
               <h2 className="text-2xl font-semibold tracking-tight">Yeni Analiz Başlat</h2>
               <p className="text-sm text-muted-foreground mt-1">Harita üzerinden tarlayı çizin ve tarihi seçin.</p>
             </div>
-            
+
             <div className="space-y-4 mt-4">
               <div className="space-y-2">
                 <label className="text-sm font-medium">AOI Adı</label>
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   value={aoiName}
                   onChange={(e) => setAoiName(e.target.value)}
                   placeholder="Örn: Çukurova Buğday Tarlası"
@@ -187,8 +187,8 @@ export default function HomePage() {
 
               <div className="space-y-2">
                 <label className="text-sm font-medium">Olay Tarihi (Afet)</label>
-                <input 
-                  type="date" 
+                <input
+                  type="date"
                   value={eventDate}
                   onChange={(e) => setEventDate(e.target.value)}
                   className="flex h-10 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -198,8 +198,8 @@ export default function HomePage() {
 
               <div className="space-y-2">
                 <label className="text-sm font-medium">Seçili Alan (WKT)</label>
-                <textarea 
-                  readOnly 
+                <textarea
+                  readOnly
                   value={wkt || "Henüz alan çizilmedi..."}
                   className="flex min-h-[80px] w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-400 focus:outline-none"
                 />
@@ -207,7 +207,7 @@ export default function HomePage() {
 
               <button 
                 onClick={handleSave}
-                disabled={isSaving || !wkt || activeJobId !== null || areaHa > MAX_AREA_HA}
+                disabled={isSaving || !wkt || areaHa > MAX_AREA_HA || (activeJobId !== null && jobStatus !== 'done' && jobStatus !== 'failed')}
                 className="w-full h-10 inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:pointer-events-none"
               >
                 {isSaving ? "İşleniyor..." : "Analizi Başlat"}
@@ -227,9 +227,12 @@ export default function HomePage() {
 
               {/* Status Tracking */}
               {activeJobId && (
-                <div className="mt-6 p-4 rounded-lg bg-zinc-950 border border-zinc-800 space-y-3">
+                <div className="mt-6 p-4 rounded-lg bg-zinc-950 border border-zinc-800">
+                  <h3 className="text-sm font-medium text-zinc-400 mb-2">İşlem Durumu</h3>
                   <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-medium text-zinc-400">İşlem Durumu</h3>
+                    <span className={`text-sm font-bold uppercase tracking-wider ${jobStatus === 'failed' ? 'text-red-500' : 'text-white'}`}>
+                      {jobStatus || "BİLİNMİYOR"}
+                    </span>
                     {jobStatus !== "done" && jobStatus !== "failed" && (
                       <span className="flex h-3 w-3">
                         <span className="animate-ping absolute inline-flex h-3 w-3 rounded-full bg-blue-400 opacity-75"></span>
@@ -238,27 +241,17 @@ export default function HomePage() {
                     )}
                   </div>
 
-                  {/* Overall status badge */}
-                  <div className={`text-xs font-bold uppercase tracking-widest px-2 py-1 rounded w-fit ${
-                    jobStatus === 'done' ? 'bg-green-900/60 text-green-300' :
-                    jobStatus === 'failed' ? 'bg-red-900/60 text-red-300' :
-                    'bg-blue-900/40 text-blue-300'
-                  }`}>
-                    {jobStatus || 'QUEUED'}
-                  </div>
-
                   {/* SAR Pipeline row */}
                   <PipelineRow label="🛰️ SAR Pipeline" status={sarStatus} />
 
                   {/* MS Pipeline row */}
                   <PipelineRow label="🌿 MS Pipeline" status={msStatus} />
 
-                  <p className="text-xs text-zinc-600 truncate" title={activeJobId}>
+                  <p className="text-xs text-zinc-500 mt-2 truncate" title={activeJobId}>
                     ID: {activeJobId}
                   </p>
-
                   {jobStatus === 'failed' && errorMessage && (
-                    <div className="p-3 bg-red-950/30 border border-red-900/50 rounded-md">
+                    <div className="mt-3 p-3 bg-red-950/30 border border-red-900/50 rounded-md">
                       <p className="text-xs text-red-400 break-words font-mono">
                         {errorMessage}
                       </p>
