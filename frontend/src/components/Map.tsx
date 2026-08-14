@@ -134,9 +134,6 @@ export default function MapComponent({
         setIsDrawing(true);
         setPoints([]);
         onPolygonChange(null, 0);
-        if (onResetAll) {
-            onResetAll();
-        }
     };
 
     const handleFinish = () => {

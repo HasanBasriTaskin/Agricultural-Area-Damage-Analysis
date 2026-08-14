@@ -80,7 +80,7 @@ export default function HomePage() {
     setAreaHa(ha ?? 0);
   };
 
-  const handleResetAll = () => {
+  const handleResetAll = (resetMap: boolean = true) => {
     setWkt(null);
     setAoiName("");
     setEventDate("");
@@ -94,8 +94,14 @@ export default function HomePage() {
     setGridData([]);
     setHotspotData([]);
     setErrorMessage(null);
-    setClearKey(prev => prev + 1);
+    if (resetMap) {
+      setClearKey(prev => prev + 1);
+    }
     toast.info("Harita ve analiz paneli sıfırlandı.");
+  };
+
+  const handleResetFromMap = () => {
+    handleResetAll(false);
   };
 
   const handleStorageCleanup = async () => {
@@ -281,7 +287,7 @@ export default function HomePage() {
             </button>
             <button
               type="button"
-              onClick={handleResetAll}
+              onClick={() => handleResetAll(true)}
               className="px-3.5 py-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-medium text-zinc-300 hover:text-white transition-all flex items-center gap-1.5 cursor-pointer"
               title="Haritadaki çizimi, hücreleri ve sonuçları sıfırlar"
             >
@@ -299,7 +305,7 @@ export default function HomePage() {
               hotspotFeatures={hotspotData}
               clearKey={clearKey}
               isAnalyzing={isSaving || (activeJobId !== null && jobStatus === 'processing')}
-              onResetAll={handleResetAll}
+              onResetAll={handleResetFromMap}
             />
           </div>
 
@@ -395,7 +401,7 @@ export default function HomePage() {
                 </button>
                 <button 
                   type="button"
-                  onClick={handleResetAll}
+                  onClick={() => handleResetAll(true)}
                   className="px-3 h-10 inline-flex items-center justify-center rounded-md text-xs font-medium text-zinc-400 bg-zinc-800 hover:bg-zinc-700 hover:text-white transition-colors cursor-pointer"
                   title="Temizle"
                 >
