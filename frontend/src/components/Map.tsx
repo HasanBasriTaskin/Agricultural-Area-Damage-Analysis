@@ -23,8 +23,30 @@ function coordsToWkt(coordinates: [number, number][]): string | null {
     return `POLYGON((${points}))`;
 }
 
+// Approximate area in hectares using Shoelace formula + lat/lng degree correction
+function calcAreaHa(coordinates: [number, number][]): number {
+    if (coordinates.length < 3) return 0;
+    const R = 6371000; // Earth radius in meters
+    const toRad = (d: number) => d * Math.PI / 180;
+    const avgLat = coordinates.reduce((s, p) => s + p[0], 0) / coordinates.length;
+    const latM = toRad(1) * R;
+    const lngM = toRad(1) * R * Math.cos(toRad(avgLat));
+    let area = 0;
+    const n = coordinates.length;
+    for (let i = 0; i < n; i++) {
+        const [lat1, lng1] = coordinates[i];
+        const [lat2, lng2] = coordinates[(i + 1) % n];
+        area += (lng1 * lngM) * (lat2 * latM) - (lng2 * lngM) * (lat1 * latM);
+    }
+    return Math.abs(area / 2) / 10000; // m² → ha
+}
+
+// GEE 10m scale download limit ≈ 32768 px per side
+// At 10m/px → 32768 × 10m = ~327 km per side → ~25,000 ha safe limit
+const MAX_AREA_HA = 25000;
+
 interface MapComponentProps {
-    onPolygonChange: (wkt: string | null) => void;
+    onPolygonChange: (wkt: string | null, areaHa?: number) => void;
 }
 
 // Sub-component that handles map click events
@@ -54,16 +76,17 @@ export default function MapComponent({ onPolygonChange }: MapComponentProps) {
         setPoints(newPoints);
 
         if (newPoints.length >= 3) {
-            onPolygonChange(coordsToWkt(newPoints));
+            const ha = calcAreaHa(newPoints);
+            onPolygonChange(coordsToWkt(newPoints), ha);
         } else {
-            onPolygonChange(null);
+            onPolygonChange(null, 0);
         }
     };
 
     const handleStartDrawing = () => {
         setIsDrawing(true);
         setPoints([]);
-        onPolygonChange(null);
+        onPolygonChange(null, 0);
     };
 
     const handleFinish = () => {
@@ -73,8 +96,11 @@ export default function MapComponent({ onPolygonChange }: MapComponentProps) {
     const handleClear = () => {
         setIsDrawing(false);
         setPoints([]);
-        onPolygonChange(null);
+        onPolygonChange(null, 0);
     };
+
+    const areaHa = points.length >= 3 ? calcAreaHa(points) : 0;
+    const areaTooLarge = areaHa > MAX_AREA_HA;
 
     return (
         <div className="w-full h-full rounded-xl overflow-hidden border border-zinc-700/50 shadow-2xl relative bg-zinc-900">
@@ -110,6 +136,22 @@ export default function MapComponent({ onPolygonChange }: MapComponentProps) {
                         🗑️ Temizle
                     </button>
                 )}
+
+                {/* Live area feedback */}
+                {points.length >= 3 && (
+                    <div className={`px-2 py-1.5 rounded text-xs font-semibold border ${
+                        areaTooLarge
+                            ? 'bg-red-950/60 border-red-700 text-red-300'
+                            : 'bg-green-950/60 border-green-800 text-green-300'
+                    }`}>
+                        📐 {areaHa.toLocaleString('tr-TR', { maximumFractionDigits: 0 })} ha
+                        {areaTooLarge && (
+                            <div className="mt-1 text-red-400 font-normal leading-tight">
+                                ⚠️ Çok büyük!<br/>Önerilen maks: ~{MAX_AREA_HA.toLocaleString('tr-TR')} ha
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
 
             <MapContainer
@@ -130,8 +172,8 @@ export default function MapComponent({ onPolygonChange }: MapComponentProps) {
                     <Polygon
                         positions={points}
                         pathOptions={{
-                            color: '#3b82f6',
-                            fillColor: '#3b82f6',
+                            color: areaTooLarge ? '#ef4444' : '#3b82f6',
+                            fillColor: areaTooLarge ? '#ef4444' : '#3b82f6',
                             fillOpacity: 0.25,
                             weight: 2,
                         }}
@@ -143,7 +185,7 @@ export default function MapComponent({ onPolygonChange }: MapComponentProps) {
                     <Polyline
                         positions={[...points, points[0]]}
                         pathOptions={{
-                            color: '#3b82f6',
+                            color: areaTooLarge ? '#ef4444' : '#3b82f6',
                             weight: 2,
                             dashArray: points.length < 3 ? '5, 10' : undefined,
                         }}
@@ -173,7 +215,8 @@ export default function MapComponent({ onPolygonChange }: MapComponentProps) {
                                 const newPts = [...points];
                                 newPts[idx] = [latlng.lat, latlng.lng];
                                 if (newPts.length >= 3) {
-                                    onPolygonChange(coordsToWkt(newPts));
+                                    const ha = calcAreaHa(newPts);
+                                    onPolygonChange(coordsToWkt(newPts), ha);
                                 }
                             }
                         }}

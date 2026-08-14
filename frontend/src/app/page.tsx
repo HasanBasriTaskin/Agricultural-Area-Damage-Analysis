@@ -3,6 +3,31 @@ import React, { useState, useMemo, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import { toast } from 'sonner';
 
+// Helper: single pipeline status row
+function statusColor(status: string | null) {
+  if (status === 'done') return 'text-green-400';
+  if (status === 'failed') return 'text-red-400';
+  if (status === 'processing') return 'text-blue-400';
+  return 'text-zinc-500';
+}
+
+function PipelineRow({ label, status }: { label: string; status: string | null }) {
+  const isRunning = status && status !== 'done' && status !== 'failed';
+  return (
+    <div className="flex items-center justify-between py-1.5 border-t border-zinc-800/60">
+      <span className="text-xs text-zinc-400">{label}</span>
+      <div className="flex items-center gap-2">
+        {isRunning && (
+          <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+        )}
+        <span className={`text-xs font-semibold uppercase ${statusColor(status)}`}>
+          {status || 'queued'}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export default function HomePage() {
   const [wkt, setWkt] = useState<string | null>(null);
   const [aoiName, setAoiName] = useState("");
@@ -10,7 +35,12 @@ export default function HomePage() {
   const [isSaving, setIsSaving] = useState(false);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<string | null>(null);
+  const [sarStatus, setSarStatus] = useState<string | null>(null);
+  const [msStatus, setMsStatus] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [areaHa, setAreaHa] = useState<number>(0);
+
+  const MAX_AREA_HA = 25000;
 
   // Leaflet needs 'window' — load only on client
   const MapComponent = useMemo(
@@ -25,13 +55,18 @@ export default function HomePage() {
     []
   );
 
-  const handlePolygonChange = (newWkt: string | null) => {
+  const handlePolygonChange = (newWkt: string | null, ha?: number) => {
     setWkt(newWkt);
+    setAreaHa(ha ?? 0);
   };
 
   const handleSave = async () => {
     if (!wkt) {
       toast.error("Lütfen haritada bir alan (AOI) çizin.");
+      return;
+    }
+    if (areaHa > MAX_AREA_HA) {
+      toast.error(`Alan çok büyük (${Math.round(areaHa).toLocaleString('tr-TR')} ha). Lütfen ${MAX_AREA_HA.toLocaleString('tr-TR')} ha'dan küçük bir alan seçin.`);
       return;
     }
     if (!aoiName.trim()) {
@@ -73,6 +108,8 @@ export default function HomePage() {
       
       setActiveJobId(jobData.id);
       setJobStatus(jobData.status);
+      setSarStatus(jobData.sar_status);
+      setMsStatus(jobData.ms_status);
       setErrorMessage(null);
       toast.info("Analiz sıraya alındı.");
 
@@ -96,6 +133,8 @@ export default function HomePage() {
         if (res.ok) {
           const data = await res.json();
           setJobStatus(data.status);
+          setSarStatus(data.sar_status);
+          setMsStatus(data.ms_status);
           if (data.status === "done") {
             toast.success("Analiz tamamlandı!");
           } else if (data.status === "failed") {
@@ -168,20 +207,29 @@ export default function HomePage() {
 
               <button 
                 onClick={handleSave}
-                disabled={isSaving || !wkt || activeJobId !== null}
+                disabled={isSaving || !wkt || activeJobId !== null || areaHa > MAX_AREA_HA}
                 className="w-full h-10 inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:pointer-events-none"
               >
                 {isSaving ? "İşleniyor..." : "Analizi Başlat"}
               </button>
 
+              {/* Area too large warning */}
+              {wkt && areaHa > MAX_AREA_HA && (
+                <div className="p-3 bg-amber-950/40 border border-amber-700/60 rounded-lg">
+                  <p className="text-xs text-amber-300 font-medium">⚠️ Alan Sınırı Aşıldı</p>
+                  <p className="text-xs text-amber-400/80 mt-1">
+                    Seçilen alan <strong>{Math.round(areaHa).toLocaleString('tr-TR')} ha</strong>.
+                    GEE indirme limiti nedeniyle maksimum <strong>~{MAX_AREA_HA.toLocaleString('tr-TR')} ha</strong> desteklenmektedir.
+                    Lütfen haritada daha küçük bir alan çizin.
+                  </p>
+                </div>
+              )}
+
               {/* Status Tracking */}
               {activeJobId && (
-                <div className="mt-6 p-4 rounded-lg bg-zinc-950 border border-zinc-800">
-                  <h3 className="text-sm font-medium text-zinc-400 mb-2">İşlem Durumu</h3>
+                <div className="mt-6 p-4 rounded-lg bg-zinc-950 border border-zinc-800 space-y-3">
                   <div className="flex items-center justify-between">
-                    <span className={`text-sm font-bold uppercase tracking-wider ${jobStatus === 'failed' ? 'text-red-500' : 'text-white'}`}>
-                      {jobStatus || "BİLİNMİYOR"}
-                    </span>
+                    <h3 className="text-sm font-medium text-zinc-400">İşlem Durumu</h3>
                     {jobStatus !== "done" && jobStatus !== "failed" && (
                       <span className="flex h-3 w-3">
                         <span className="animate-ping absolute inline-flex h-3 w-3 rounded-full bg-blue-400 opacity-75"></span>
@@ -189,11 +237,28 @@ export default function HomePage() {
                       </span>
                     )}
                   </div>
-                  <p className="text-xs text-zinc-500 mt-2 truncate" title={activeJobId}>
+
+                  {/* Overall status badge */}
+                  <div className={`text-xs font-bold uppercase tracking-widest px-2 py-1 rounded w-fit ${
+                    jobStatus === 'done' ? 'bg-green-900/60 text-green-300' :
+                    jobStatus === 'failed' ? 'bg-red-900/60 text-red-300' :
+                    'bg-blue-900/40 text-blue-300'
+                  }`}>
+                    {jobStatus || 'QUEUED'}
+                  </div>
+
+                  {/* SAR Pipeline row */}
+                  <PipelineRow label="🛰️ SAR Pipeline" status={sarStatus} />
+
+                  {/* MS Pipeline row */}
+                  <PipelineRow label="🌿 MS Pipeline" status={msStatus} />
+
+                  <p className="text-xs text-zinc-600 truncate" title={activeJobId}>
                     ID: {activeJobId}
                   </p>
+
                   {jobStatus === 'failed' && errorMessage && (
-                    <div className="mt-3 p-3 bg-red-950/30 border border-red-900/50 rounded-md">
+                    <div className="p-3 bg-red-950/30 border border-red-900/50 rounded-md">
                       <p className="text-xs text-red-400 break-words font-mono">
                         {errorMessage}
                       </p>
