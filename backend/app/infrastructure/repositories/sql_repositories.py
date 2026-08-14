@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from geoalchemy2.shape import to_shape
 from geoalchemy2.elements import WKBElement
 
+from app.domain.entities import UserEntity, AOIEntity, AnalysisJobEntity
 from app.domain.repositories import (
     UserRepository, AOIRepository, AnalysisJobRepository,
     GridCellRepository, HotspotRepository, OutputArtifactRepository

@@ -1,6 +1,6 @@
 import uuid
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import List, Optional, Any
 from .entities import UserEntity, AOIEntity, AnalysisJobEntity
 
 class UserRepository(ABC):
