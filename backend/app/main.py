@@ -1,17 +1,13 @@
-from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select
-
-from app.api.routes import aoi, job, results, export, system, auth, admin_users, admin_jobs
+from contextlib import asynccontextmanager
+from app.api.routes import aoi, job, results, export, system, auth, admin_users, admin_jobs, health
 from app.infrastructure.db.database import AsyncSessionLocal
 from app.infrastructure.db.models import User, RoleEnum
 from app.core.security import get_password_hash
+from sqlalchemy import select
 
 async def seed_initial_users():
-    """
-    Seeds default system users on application startup if they don't exist or refreshes their password.
-    """
     default_users = [
         {"email": "admin@damage.org", "password": "Admin123!", "role": RoleEnum.ADMIN},
         {"email": "analyst@damage.org", "password": "Analyst123!", "role": RoleEnum.ANALYST},
@@ -48,7 +44,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="SAR + MS Tarımsal Hasar Analizi API",
-    description="Tarımsal Hasar Analizi için FastAPI tabanlı backend",
+    description="Tarımsal Hasar Analizi için FastAPI tabanlı REST API ve Asenkron Pipeline Sistemi",
     version="1.0.0",
     lifespan=lifespan
 )
@@ -62,6 +58,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(health.router, prefix="/api/v1")
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(admin_users.router, prefix="/api/v1")
 app.include_router(admin_jobs.router, prefix="/api/v1")
@@ -72,9 +69,14 @@ app.include_router(export.router, prefix="/api/v1")
 app.include_router(system.router, prefix="/api/v1")
 
 @app.get("/health")
-async def health_check():
-    return {"status": "healthy"}
+async def root_health():
+    return {"status": "healthy", "service": "damage-analysis-api", "version": "1.0.0"}
 
 @app.get("/")
 async def root():
-    return {"message": "Tarımsal Hasar Analizi API Çalışıyor"}
+    return {
+        "title": "SAR + MS Tarımsal Hasar Analiz Platformu API",
+        "version": "1.0.0",
+        "docs": "/docs",
+        "openapi": "/openapi.json"
+    }

@@ -3,6 +3,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/damage_analysis")
+    REDIS_URL: str = os.getenv("REDIS_URL", "redis://redis:6379/0")
 
     # MinIO Storage Settings
     MINIO_ENDPOINT: str = os.getenv("MINIO_ENDPOINT", "minio:9000")
