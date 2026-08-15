@@ -378,29 +378,43 @@ export default function MapComponent({
 
             {/* Swipe Interactive Bar & Overlay Banner (Sprint 8) */}
             {gridFeatures.length > 0 && isSwipeMode && (
-                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[1000] w-11/12 max-w-md bg-zinc-950/95 p-3 rounded-2xl border border-zinc-700 shadow-2xl backdrop-blur-md space-y-2">
-                    <div className="flex items-center justify-between text-xs font-bold">
-                        <span className="text-sky-400 flex items-center gap-1">
-                            <span>⬅️</span> Afet Öncesi (Doğal Uydu)
-                        </span>
-                        <span className="text-red-400 flex items-center gap-1">
-                            Hasar Katmanı <span>➡️</span>
-                        </span>
+                <>
+                    {/* Vertical Dividing Laser Line on Map Canvas */}
+                    <div
+                        className="absolute top-0 bottom-0 z-[990] pointer-events-none transition-all duration-75 flex items-center justify-center"
+                        style={{ left: `${swipePos}%` }}
+                    >
+                        <div className="w-[2px] h-full bg-white shadow-[0_0_10px_#38bdf8,0_0_20px_#ffffff] relative">
+                            <div className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-8 h-8 bg-zinc-950/95 border-2 border-white rounded-full flex items-center justify-center shadow-2xl text-xs font-bold text-white backdrop-blur-md">
+                                ⇄
+                            </div>
+                        </div>
                     </div>
-                    <input
-                        type="range"
-                        min="0"
-                        max="100"
-                        value={swipePos}
-                        onChange={(e) => setSwipePos(parseInt(e.target.value))}
-                        className="w-full h-2 bg-gradient-to-r from-sky-500 via-zinc-600 to-red-500 rounded-lg appearance-none cursor-pointer accent-white"
-                    />
-                    <div className="flex items-center justify-between text-[10px] text-zinc-400 font-mono">
-                        <span>%0 (Tam Uydu)</span>
-                        <span className="font-bold text-zinc-200">Perde: %{swipePos}</span>
-                        <span>%100 (Tam Hasar)</span>
+
+                    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[1000] w-11/12 max-w-md bg-zinc-950/95 p-3 rounded-2xl border border-zinc-700 shadow-2xl backdrop-blur-md space-y-2">
+                        <div className="flex items-center justify-between text-xs font-bold">
+                            <span className="text-sky-400 flex items-center gap-1">
+                                <span>⬅️</span> Afet Öncesi (Doğal Uydu)
+                            </span>
+                            <span className="text-red-400 flex items-center gap-1">
+                                Hasar Katmanı <span>➡️</span>
+                            </span>
+                        </div>
+                        <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            value={swipePos}
+                            onChange={(e) => setSwipePos(parseInt(e.target.value))}
+                            className="w-full h-2 bg-gradient-to-r from-sky-500 via-zinc-600 to-red-500 rounded-lg appearance-none cursor-pointer accent-white"
+                        />
+                        <div className="flex items-center justify-between text-[10px] text-zinc-400 font-mono">
+                            <span>%0 (Tam Uydu)</span>
+                            <span className="font-bold text-zinc-200">Perde: %{swipePos}</span>
+                            <span>%100 (Tam Hasar)</span>
+                        </div>
                     </div>
-                </div>
+                </>
             )}
 
             {/* Grid Legend Overlay */}
