@@ -1,5 +1,30 @@
-import NextAuth, { NextAuthOptions } from "next-auth";
+import NextAuth, { NextAuthOptions, DefaultSession } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
+
+declare module "next-auth" {
+  interface Session {
+    accessToken?: string;
+    user: {
+      id?: string;
+      role?: string;
+    } & DefaultSession["user"];
+  }
+
+  interface User {
+    id?: string;
+    email?: string;
+    role?: string;
+    access_token?: string;
+  }
+}
+
+declare module "next-auth/jwt" {
+  interface JWT {
+    accessToken?: string;
+    role?: string;
+    id?: string;
+  }
+}
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -15,31 +40,60 @@ export const authOptions: NextAuthOptions = {
         }
 
         try {
-          // İleride bu kısım doğrudan FastAPI backendine istek atacak şekilde güncellenecektir.
-          const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/login`, {
-            method: 'POST',
-            body: JSON.stringify(credentials),
+          const apiUrl = process.env.INTERNAL_API_URL || process.env.NEXT_PUBLIC_API_URL || "http://api:8000";
+          const res = await fetch(`${apiUrl}/api/v1/auth/login`, {
+            method: "POST",
+            body: JSON.stringify({
+              email: credentials.email,
+              password: credentials.password
+            }),
             headers: { "Content-Type": "application/json" }
           });
-          
-          const user = await res.json();
-          if (res.ok && user) {
-            return user;
+
+          const data = await res.json();
+          if (res.ok && data?.access_token) {
+            return {
+              id: data.user.id,
+              email: data.user.email,
+              name: data.user.email.split("@")[0],
+              role: data.user.role,
+              access_token: data.access_token
+            };
           }
         } catch (error) {
-          console.error("Auth error:", error);
+          console.error("Auth authorize error:", error);
         }
-        
+
         return null;
       }
     })
   ],
+  callbacks: {
+    async jwt({ token, user }) {
+      if (user) {
+        token.accessToken = user.access_token;
+        token.role = user.role;
+        token.id = user.id;
+      }
+      return token;
+    },
+    async session({ session, token }) {
+      if (session.user) {
+        session.user.id = token.id as string;
+        session.user.role = token.role as string;
+      }
+      session.accessToken = token.accessToken as string;
+      return session;
+    }
+  },
   session: {
     strategy: "jwt",
+    maxAge: 24 * 60 * 60
   },
   pages: {
-    signIn: "/login",
+    signIn: "/login"
   },
+  secret: process.env.NEXTAUTH_SECRET || "tarimsal-hasar-analizi-nextauth-secret-key-2026"
 };
 
 const handler = NextAuth(authOptions);

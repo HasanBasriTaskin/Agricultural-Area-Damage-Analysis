@@ -1,9 +1,11 @@
 "use client"
 import React, { useState, useMemo, useEffect } from 'react';
 import dynamic from 'next/dynamic';
+import { useSession } from 'next-auth/react';
 import { toast } from 'sonner';
 import ExportModal from '@/components/ExportModal';
 import TimeSeriesChart from '@/components/TimeSeriesChart';
+import { Sidebar } from '@/components/Sidebar';
 
 // Helper: single pipeline status row
 function statusColor(status: string | null) {
@@ -31,6 +33,7 @@ function PipelineRow({ label, status }: { label: string; status: string | null }
 }
 
 export default function HomePage() {
+  const { data: session } = useSession();
   const [wkt, setWkt] = useState<string | null>(null);
   const [aoiName, setAoiName] = useState("");
   const [eventDate, setEventDate] = useState("");
@@ -98,26 +101,82 @@ export default function HomePage() {
     if (resetMap) {
       setClearKey(prev => prev + 1);
     }
-    toast.info("Harita ve analiz paneli sıfırlandı.");
   };
 
   const handleResetFromMap = () => {
     handleResetAll(false);
   };
 
-  const handleStorageCleanup = async () => {
+  // Helper to obtain a valid Bearer token (from NextAuth or fallback demo user)
+  const getAuthToken = async (): Promise<string | null> => {
+    if (session?.accessToken) return session.accessToken;
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const res = await fetch(`${apiUrl}/api/v1/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'analyst@damage.org', password: 'Analyst123!' })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return data.access_token;
+      }
+    } catch (e) {
+      console.error("Auto login token error:", e);
+    }
+    return null;
+  };
+
+  // Load job from URL search param if present (e.g., from /jobs page view link)
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const qJobId = params.get("jobId");
+      if (qJobId && qJobId !== activeJobId) {
+        setActiveJobId(qJobId);
+        setJobStatus("done");
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+        Promise.all([
+          fetch(`${apiUrl}/api/v1/jobs/${qJobId}/results/summary`),
+          fetch(`${apiUrl}/api/v1/jobs/${qJobId}/results/grid`),
+          fetch(`${apiUrl}/api/v1/jobs/${qJobId}/results/hotspots`)
+        ]).then(async ([sRes, gRes, hRes]) => {
+          if (sRes.ok) setSummaryData(await sRes.json());
+          if (gRes.ok) {
+            const g = await gRes.json();
+            setGridData(g.features || []);
+          }
+          if (hRes.ok) {
+            const h = await hRes.json();
+            setHotspotData(h.features || []);
+          }
+          toast.success("Geçmiş analiz haritaya yüklendi.");
+        }).catch(err => console.error(err));
+      }
+    }
+  }, []);
+
+  const handleCleanStorage = async () => {
+    if (!confirm("Dikkat: Sadece yerel geçici raster ve cache dosyaları temizlenecektir. Devam etmek istiyor musunuz?")) {
+      return;
+    }
     setIsCleaning(true);
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      const res = await fetch(`${apiUrl}/api/v1/system/cleanup`, { method: 'POST' });
+      const token = await getAuthToken();
+      const res = await fetch(`${apiUrl}/api/v1/system/clean-storage`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
       if (res.ok) {
         const data = await res.json();
-        toast.success(`Geçici disk dosyaları temizlendi! (${data.freed_mb} MB yer açıldı, ${data.local_files_removed} dosya silindi)`);
+        toast.success(`Temizlik tamamlandı: ${data.cleaned_count || 0} geçici dosya temizlendi.`);
+        handleResetAll(true);
       } else {
-        toast.error("Temizleme işlemi tamamlanamadı.");
+        toast.error("Temizlik işlemi sırasında hata oluştu.");
       }
-    } catch (err: any) {
-      toast.error("Temizleme sırasında hata oluştu: " + err.message);
+    } catch (err) {
+      toast.error("Sunucuya bağlanılamadı.");
     } finally {
       setIsCleaning(false);
     }
@@ -125,23 +184,19 @@ export default function HomePage() {
 
   const handleSave = async () => {
     if (!wkt) {
-      toast.error("Lütfen haritada en az 3 nokta ile bir alan (AOI) çizin.");
-      return;
-    }
-    if (areaHa > MAX_AREA_HA) {
-      toast.error(`Alan çok büyük (${Math.round(areaHa).toLocaleString('tr-TR')} ha). Lütfen ${MAX_AREA_HA.toLocaleString('tr-TR')} ha'dan küçük bir alan seçin.`);
-      return;
-    }
-    if (!aoiName.trim()) {
-      toast.error("Lütfen AOI için bir isim girin.");
+      toast.error("Lütfen harita üzerinden bir alan çizin!");
       return;
     }
     if (!eventDate) {
-      toast.error("Lütfen olay tarihini girin.");
+      toast.error("Lütfen bir olay tarihi seçin!");
+      return;
+    }
+    if (areaHa > MAX_AREA_HA) {
+      toast.error(`Çizilen alan (${Math.round(areaHa).toLocaleString('tr-TR')} ha) maksimum 25.000 ha sınırını aşıyor!`);
       return;
     }
 
-    // 1. Immediately reset previous analysis and clear old grid hexagons
+    // 1. Reset previous results & status
     setSummaryData(null);
     setGridData([]);
     setHotspotData([]);
@@ -154,12 +209,17 @@ export default function HomePage() {
 
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const token = await getAuthToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
 
       // 2. Create AOI
       const aoiResponse = await fetch(`${apiUrl}/api/v1/aoi/`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: aoiName, geometry: wkt })
+        headers,
+        body: JSON.stringify({ name: aoiName || "İsimsiz Parsel", geometry: wkt })
       });
 
       if (!aoiResponse.ok) throw new Error("AOI kaydı başarısız.");
@@ -169,7 +229,7 @@ export default function HomePage() {
       // 3. Create Job
       const jobResponse = await fetch(`${apiUrl}/api/v1/jobs/`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           aoi_id: aoiData.id,
           event_date: new Date(eventDate).toISOString(),
@@ -248,58 +308,56 @@ export default function HomePage() {
             toast.error("Analiz başarısız oldu.");
           }
         }
-      } catch (err) {
-        console.error("Polling error:", err);
+      } catch (e) {
+        console.error("Polling error:", e);
       }
-    }, 3000);
+    }, 2500);
 
     return () => clearInterval(interval);
   }, [activeJobId, jobStatus]);
 
   return (
-    <main className="min-h-screen bg-background text-foreground p-8 flex flex-col">
-      <div className="max-w-7xl mx-auto space-y-6 flex-1 w-full flex flex-col">
-        {/* Header & Quick Action Buttons */}
-        <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="space-y-1">
-            <h1 className="text-3xl font-extrabold tracking-tight text-zinc-100">SAR + MS Tarımsal Hasar Analiz Platformu</h1>
-            <p className="text-muted-foreground text-sm">
+    <div className="min-h-screen flex bg-zinc-950 text-zinc-100 selection:bg-emerald-500 selection:text-black">
+      {/* Navigation Sidebar */}
+      <Sidebar />
+
+      {/* Main Content Area */}
+      <main className="flex-1 flex flex-col p-6 space-y-6 overflow-y-auto max-w-[1700px]">
+        {/* Top Header Banner */}
+        <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-800">
+          <div>
+            <h1 className="text-xl font-bold tracking-tight text-zinc-100 flex items-center gap-2">
+              <span>🌾</span> SAR + MS Tarımsal Hasar Analiz Platformu
+            </h1>
+            <p className="text-xs text-zinc-400 mt-0.5">
               Çoklu sensör uydu füzyonu, H3 uzamsal birikim ve meteorolojik afet değerlendirme sistemi.
             </p>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+
+          <div className="flex items-center gap-2.5">
             <button
-              type="button"
-              onClick={handleStorageCleanup}
+              onClick={handleCleanStorage}
               disabled={isCleaning}
-              className="px-3.5 py-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-medium text-zinc-300 hover:text-white transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-              title="Geçici raster dosyalarını ve disk önbelleğini temizler"
+              className="px-3 py-1.5 rounded-xl border border-zinc-800 bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+              title="Önbellek ve geçici dosyaları temizle"
             >
-              {isCleaning ? (
-                <>
-                  <span className="w-3 h-3 border-2 border-zinc-400 border-t-transparent rounded-full animate-spin" />
-                  Temizleniyor...
-                </>
-              ) : (
-                <>
-                  <span>🗑️</span> Diski & Önbelleği Temizle
-                </>
-              )}
+              <span>🧹</span>
+              <span>{isCleaning ? "Temizleniyor..." : "Disk Temizliği"}</span>
             </button>
             <button
-              type="button"
               onClick={() => handleResetAll(true)}
-              className="px-3.5 py-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-medium text-zinc-300 hover:text-white transition-all flex items-center gap-1.5 cursor-pointer"
-              title="Haritadaki çizimi, hücreleri ve sonuçları sıfırlar"
+              className="px-3 py-1.5 rounded-xl border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 text-red-300 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
             >
-              <span>🧹</span> Haritayı Sıfırla
+              <span>🗑️</span>
+              <span>Tümünü Sıfırla</span>
             </button>
           </div>
         </header>
 
-        <section className="flex flex-col md:flex-row gap-6 flex-1 h-[calc(100vh-170px)] min-h-[600px] items-stretch">
+        {/* Workspace: Map + Control Sidebar */}
+        <section className="flex flex-col lg:flex-row gap-6 flex-1 min-h-[620px] items-stretch">
           {/* Map Area */}
-          <div className="flex-1 h-full rounded-xl relative">
+          <div className="flex-1 min-h-[550px] rounded-2xl relative overflow-hidden border border-zinc-800 shadow-2xl">
             <MapComponent
               onPolygonChange={handlePolygonChange}
               gridFeatures={gridData}
@@ -310,41 +368,43 @@ export default function HomePage() {
             />
           </div>
 
-          {/* Sidebar / Form */}
-          <div className="w-full md:w-96 flex flex-col gap-4 bg-zinc-900/50 p-6 rounded-xl border border-zinc-800 h-full overflow-y-auto custom-scrollbar">
+          {/* Form & Controls Panel */}
+          <div className="w-full lg:w-96 flex flex-col gap-4 bg-zinc-900/60 p-6 rounded-2xl border border-zinc-800/80 backdrop-blur-md overflow-y-auto">
             <div>
-              <h2 className="text-xl font-semibold tracking-tight text-zinc-100">Yeni Analiz Başlat</h2>
-              <p className="text-xs text-muted-foreground mt-1">Harita üzerinden tarlayı çizin ve tarihi seçin.</p>
+              <h2 className="text-base font-semibold text-zinc-100 flex items-center gap-2">
+                <span>🎯</span> Yeni Analiz Başlat
+              </h2>
+              <p className="text-xs text-zinc-400 mt-1">Harita üzerinden parselinizi çizin ve afet tarihini seçin.</p>
             </div>
 
-            <div className="space-y-4 mt-2">
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-zinc-300">AOI / Tarla Adı</label>
+            <div className="space-y-3.5 mt-1">
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-zinc-300">Tarla / Alan Adı</label>
                 <input
                   type="text"
                   value={aoiName}
                   onChange={(e) => setAoiName(e.target.value)}
-                  placeholder="Örn: Çukurova Buğday Tarlası"
-                  className="flex h-9 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Örn: Manisa Buğday Parseli"
+                  className="flex h-9 w-full rounded-xl border border-zinc-700/80 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-emerald-500"
                 />
               </div>
 
-              <div className="space-y-1.5">
+              <div className="space-y-1">
                 <label className="text-xs font-medium text-zinc-300">Olay Tarihi (Afet)</label>
                 <input
                   type="date"
                   value={eventDate}
                   onChange={(e) => setEventDate(e.target.value)}
-                  className="flex h-9 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="flex h-9 w-full rounded-xl border border-zinc-700/80 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-200 focus:outline-none focus:border-emerald-500"
                   style={{ colorScheme: 'dark' }}
                 />
               </div>
 
-              <div className="space-y-1.5">
+              <div className="space-y-1">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-medium text-zinc-300">Seçili Alan (WKT)</label>
                   {areaHa > 0 && (
-                    <span className="text-[11px] font-semibold text-emerald-400">
+                    <span className="text-[11px] font-semibold text-emerald-400 font-mono">
                       {Math.round(areaHa).toLocaleString('tr-TR')} ha
                     </span>
                   )}
@@ -353,220 +413,144 @@ export default function HomePage() {
                   readOnly
                   rows={2}
                   value={wkt || "Henüz alan çizilmedi..."}
-                  className="flex w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-[11px] text-zinc-400 font-mono focus:outline-none resize-none"
+                  className="flex w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-[11px] text-zinc-400 font-mono focus:outline-none resize-none"
                 />
               </div>
 
-              <div className="space-y-1.5">
+              {/* Optional Weights Panel */}
+              <div className="space-y-1 pt-1">
                 <button
                   type="button"
                   onClick={() => setShowWeights(!showWeights)}
-                  className="text-xs text-blue-400 hover:text-blue-300 font-medium"
+                  className="text-xs text-emerald-400 hover:text-emerald-300 font-medium cursor-pointer"
                 >
-                  {showWeights ? "Ağırlık Ayarlarını Gizle" : "Ağırlık Ayarlarını Göster (Opsiyonel)"}
+                  {showWeights ? "▲ Ağırlık Ayarlarını Gizle" : "▼ Füzyon Ağırlıklarını Ayarla (Opsiyonel)"}
                 </button>
 
                 {showWeights && (
-                  <div className="grid grid-cols-2 gap-2.5 p-3 bg-zinc-950 border border-zinc-800 rounded-md mt-1.5">
-                    <div className="space-y-1">
+                  <div className="grid grid-cols-2 gap-2 p-3 bg-zinc-950/80 border border-zinc-800 rounded-xl mt-1 text-xs">
+                    <div>
                       <label className="text-[10px] text-zinc-400">SAR Ağırlığı</label>
-                      <input type="number" step="0.01" value={weightSar} onChange={e => setWeightSar(parseFloat(e.target.value) || 0)} className="w-full h-7 rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-300" />
+                      <input type="number" step="0.01" value={weightSar} onChange={e => setWeightSar(parseFloat(e.target.value) || 0)} className="w-full h-7 rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-200" />
                     </div>
-                    <div className="space-y-1">
+                    <div>
                       <label className="text-[10px] text-zinc-400">NDMI Ağırlığı</label>
-                      <input type="number" step="0.01" value={weightNdmi} onChange={e => setWeightNdmi(parseFloat(e.target.value) || 0)} className="w-full h-7 rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-300" />
+                      <input type="number" step="0.01" value={weightNdmi} onChange={e => setWeightNdmi(parseFloat(e.target.value) || 0)} className="w-full h-7 rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-200" />
                     </div>
-                    <div className="space-y-1">
+                    <div>
                       <label className="text-[10px] text-zinc-400">NDRE Ağırlığı</label>
-                      <input type="number" step="0.01" value={weightNdre} onChange={e => setWeightNdre(parseFloat(e.target.value) || 0)} className="w-full h-7 rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-300" />
+                      <input type="number" step="0.01" value={weightNdre} onChange={e => setWeightNdre(parseFloat(e.target.value) || 0)} className="w-full h-7 rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-200" />
                     </div>
-                    <div className="space-y-1">
+                    <div>
                       <label className="text-[10px] text-zinc-400">Yağış Ağırlığı</label>
-                      <input type="number" step="0.01" value={weightPrecip} onChange={e => setWeightPrecip(parseFloat(e.target.value) || 0)} className="w-full h-7 rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-300" />
+                      <input type="number" step="0.01" value={weightPrecip} onChange={e => setWeightPrecip(parseFloat(e.target.value) || 0)} className="w-full h-7 rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-200" />
                     </div>
-                    <div className="space-y-1 col-span-2">
+                    <div className="col-span-2">
                       <label className="text-[10px] text-zinc-400">Toprak Nemi Ağırlığı</label>
-                      <input type="number" step="0.01" value={weightSm} onChange={e => setWeightSm(parseFloat(e.target.value) || 0)} className="w-full h-7 rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-300" />
+                      <input type="number" step="0.01" value={weightSm} onChange={e => setWeightSm(parseFloat(e.target.value) || 0)} className="w-full h-7 rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-200" />
                     </div>
                   </div>
                 )}
               </div>
 
-              <div className="flex gap-2 pt-1">
+              {/* Action Button */}
+              <div className="pt-2">
                 <button 
                   onClick={handleSave}
                   disabled={isSaving || !wkt || areaHa > MAX_AREA_HA || (activeJobId !== null && jobStatus !== 'done' && jobStatus !== 'failed')}
-                  className="flex-1 h-10 inline-flex items-center justify-center whitespace-nowrap rounded-md text-xs font-semibold transition-colors bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:pointer-events-none cursor-pointer"
+                  className="w-full h-11 inline-flex items-center justify-center rounded-xl text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-all shadow-lg shadow-emerald-950/40 disabled:opacity-50 disabled:pointer-events-none cursor-pointer"
                 >
                   {isSaving ? "Analiz Başlatılıyor..." : "🚀 Analizi Başlat"}
                 </button>
-                <button 
-                  type="button"
-                  onClick={() => handleResetAll(true)}
-                  className="px-3 h-10 inline-flex items-center justify-center rounded-md text-xs font-medium text-zinc-400 bg-zinc-800 hover:bg-zinc-700 hover:text-white transition-colors cursor-pointer"
-                  title="Temizle"
-                >
-                  Temizle
-                </button>
               </div>
-
-              {/* Area too large warning */}
-              {wkt && areaHa > MAX_AREA_HA && (
-                <div className="p-3 bg-red-950/40 border border-red-700/60 rounded-lg">
-                  <p className="text-xs text-red-300 font-medium">⚠️ Alan Sınırı Aşıldı</p>
-                  <p className="text-[11px] text-red-400/90 mt-1">
-                    Seçilen alan <strong>{Math.round(areaHa).toLocaleString('tr-TR')} ha</strong>.
-                    Maksimum <strong>~{MAX_AREA_HA.toLocaleString('tr-TR')} ha</strong> desteklenmektedir.
-                  </p>
-                </div>
-              )}
-
-              {/* Status Tracking */}
-              {activeJobId && (
-                <div className="mt-4 p-4 rounded-lg bg-zinc-950 border border-zinc-800">
-                  <h3 className="text-xs font-semibold text-zinc-400 mb-2">İşlem Durumu</h3>
-                  <div className="flex items-center justify-between">
-                    <span className={`text-sm font-bold uppercase tracking-wider ${jobStatus === 'failed' ? 'text-red-500' : jobStatus === 'done' ? 'text-green-400' : 'text-blue-400'}`}>
-                      {jobStatus || "BİLİNMİYOR"}
-                    </span>
-                    {jobStatus !== "done" && jobStatus !== "failed" && (
-                      <span className="flex h-2.5 w-2.5 relative">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-500"></span>
-                      </span>
-                    )}
-                  </div>
-
-                  {/* SAR Pipeline row */}
-                  <PipelineRow label="🛰️ SAR Pipeline" status={sarStatus} />
-
-                  {/* MS Pipeline row */}
-                  <PipelineRow label="🌿 MS Pipeline" status={msStatus} />
-
-                  {/* Weather Pipeline row */}
-                  <PipelineRow label="🌤️ Weather Pipeline" status={weatherStatus} />
-
-                  <p className="text-[10px] text-zinc-500 mt-2 truncate font-mono" title={activeJobId}>
-                    ID: {activeJobId}
-                  </p>
-                  {jobStatus === 'failed' && errorMessage && (
-                    <div className="mt-3 p-2.5 bg-red-950/30 border border-red-900/50 rounded-md">
-                      <p className="text-[11px] text-red-400 break-words font-mono">
-                        {errorMessage}
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Sprint 6: Results Summary & MVP Grid Table */}
-                  {summaryData && (
-                    <div className="mt-4 pt-4 border-t border-zinc-800 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-semibold text-zinc-300">📊 Uzamsal Birikim Özeti</span>
-                        <span className="text-[10px] bg-blue-950 text-blue-300 border border-blue-800 px-1.5 py-0.5 rounded">H3 Hex</span>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="p-2 bg-zinc-900 rounded border border-zinc-800">
-                          <p className="text-[10px] text-zinc-400">Ortalama Hasar</p>
-                          <p className="text-sm font-bold text-amber-400">%{Math.round(summaryData.mean_damage_score * 100)}</p>
-                        </div>
-                        <div className="p-2 bg-zinc-900 rounded border border-zinc-800">
-                          <p className="text-[10px] text-zinc-400">Toplam Grid</p>
-                          <p className="text-sm font-bold text-zinc-200">{summaryData.total_cells}</p>
-                        </div>
-                        <div className="p-2 bg-zinc-900 rounded border border-zinc-800">
-                          <p className="text-[10px] text-zinc-400">🔥 Hotspot Odak</p>
-                          <p className="text-sm font-bold text-red-400">{summaryData.hotspot_cells_count}</p>
-                        </div>
-                        <div className="p-2 bg-zinc-900 rounded border border-zinc-800">
-                          <p className="text-[10px] text-zinc-400">❄️ Coldspot</p>
-                          <p className="text-sm font-bold text-emerald-400">{summaryData.coldspot_cells_count}</p>
-                        </div>
-                      </div>
-
-                      {/* Class Distribution Badges */}
-                      <div className="space-y-1 pt-1">
-                        <p className="text-[10px] text-zinc-400 font-medium">Hasar Sınıf Dağılımı</p>
-                        <div className="flex flex-wrap gap-1">
-                          <span className="text-[10px] bg-emerald-950 text-emerald-300 border border-emerald-800 px-2 py-0.5 rounded">
-                            Yok: {summaryData.distribution?.Yok || 0}
-                          </span>
-                          <span className="text-[10px] bg-yellow-950 text-yellow-300 border border-yellow-800 px-2 py-0.5 rounded">
-                            Hafif: {summaryData.distribution?.Hafif || 0}
-                          </span>
-                          <span className="text-[10px] bg-orange-950 text-orange-300 border border-orange-800 px-2 py-0.5 rounded">
-                            Orta: {summaryData.distribution?.Orta || 0}
-                          </span>
-                          <span className="text-[10px] bg-red-950 text-red-300 border border-red-800 px-2 py-0.5 rounded">
-                            Ağır: {summaryData.distribution?.Ağır || 0}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Export & Download Hub Button */}
-                      <div className="pt-2">
-                        <button
-                          type="button"
-                          onClick={() => setIsExportOpen(true)}
-                          className="w-full py-2.5 px-4 flex items-center justify-center gap-2 text-xs font-semibold text-white bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 rounded-lg shadow-lg shadow-emerald-950/40 border border-emerald-500/30 transition-all cursor-pointer"
-                        >
-                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                          </svg>
-                          📥 Rapor & Çıktıları İndir (PDF, GeoTIFF, Vektör)
-                        </button>
-                      </div>
-
-                      {/* Toggle Grid Table */}
-                      <div className="pt-1">
-                        <button
-                          type="button"
-                          onClick={() => setShowGridList(!showGridList)}
-                          className="w-full py-1.5 text-xs text-zinc-400 bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 rounded font-medium transition-colors"
-                        >
-                          {showGridList ? "Grid Listesini Gizle" : `Grid Hücrelerini Listele (${gridData.length})`}
-                        </button>
-
-                        {showGridList && (
-                          <div className="mt-2 max-h-48 overflow-y-auto space-y-1.5 pr-1 text-[11px]">
-                            {gridData.map((f, i) => (
-                              <div key={i} className="p-2 bg-zinc-900/80 rounded border border-zinc-800/80 flex items-center justify-between">
-                                <div>
-                                  <p className="font-mono text-[10px] text-zinc-300">{f.properties.h3_index}</p>
-                                  <p className="text-zinc-500 text-[9px]">{f.properties.damage_class}</p>
-                                </div>
-                                <span className={`font-semibold ${f.properties.damage_score > 0.45 ? 'text-red-400' : 'text-zinc-300'}`}>
-                                  %{Math.round(f.properties.damage_score * 100)}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
+
+            {/* Pipeline Status Cards */}
+            {activeJobId && (
+              <div className="bg-zinc-950/80 p-4 rounded-xl border border-zinc-800 space-y-2 mt-auto">
+                <div className="flex items-center justify-between text-xs font-medium pb-2 border-b border-zinc-800">
+                  <span className="text-zinc-400">İşlem Durumu</span>
+                  <span className={`font-bold uppercase ${statusColor(jobStatus)}`}>
+                    {jobStatus || "Bekleniyor"}
+                  </span>
+                </div>
+                <PipelineRow label="Sentinel-1 SAR Radar" status={sarStatus} />
+                <PipelineRow label="Sentinel-2 Optik (MS)" status={msStatus} />
+                <PipelineRow label="ERA5 & Open-Meteo" status={weatherStatus} />
+              </div>
+            )}
           </div>
         </section>
 
-        {/* Sprint 8: 30-Day Meteorological Time Series Chart */}
+        {/* 30-Day Meteorological Time Series Chart (Sprint 8) */}
         {activeJobId && summaryData && (
-          <div className="pt-2">
+          <section className="mt-2">
             <TimeSeriesChart jobId={activeJobId} />
-          </div>
+          </section>
         )}
-      </div>
 
-      {/* Sprint 7: Export & Reporting Modal */}
-      {activeJobId && (
-        <ExportModal
-          isOpen={isExportOpen}
-          onClose={() => setIsExportOpen(false)}
-          jobId={activeJobId}
-        />
-      )}
-    </main>
+        {/* Results & Statistical Dashboard */}
+        {activeJobId && summaryData && (
+          <section className="bg-zinc-900/60 p-6 rounded-2xl border border-zinc-800/80 space-y-6 shadow-xl backdrop-blur-md">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-800">
+              <div>
+                <h2 className="text-lg font-bold text-zinc-100 flex items-center gap-2">
+                  <span>📊</span> Hasar Değerlendirme & İstatistiksel Rapor
+                </h2>
+                <p className="text-xs text-zinc-400 mt-0.5">H3 Grid hücresel ayrıştırma ve çoklu sensör analiz sonuçları.</p>
+              </div>
+              <button
+                onClick={() => setIsExportOpen(true)}
+                className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-semibold flex items-center gap-2 shadow-lg shadow-emerald-950/40 transition-all cursor-pointer"
+              >
+                <span>📥</span>
+                <span>Rapor & Çıktıları İndir</span>
+              </button>
+            </div>
+
+            {/* Metric Overview Cards */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="p-4 rounded-xl bg-zinc-950/60 border border-zinc-800 space-y-1">
+                <span className="text-xs text-zinc-400">Ortalama Hasar</span>
+                <p className="text-2xl font-bold font-mono text-emerald-400">
+                  %{Math.round((summaryData.mean_damage_score || 0) * 100)}
+                </p>
+                <span className="text-[10px] text-zinc-500">Tüm Parsel Geneli</span>
+              </div>
+              <div className="p-4 rounded-xl bg-zinc-950/60 border border-zinc-800 space-y-1">
+                <span className="text-xs text-zinc-400">Toplam Hücre</span>
+                <p className="text-2xl font-bold font-mono text-zinc-100">
+                  {summaryData.total_cells || 0}
+                </p>
+                <span className="text-[10px] text-zinc-500">H3 Resolution 9</span>
+              </div>
+              <div className="p-4 rounded-xl bg-zinc-950/60 border border-zinc-800 space-y-1">
+                <span className="text-xs text-zinc-400">🔥 Kritik Hotspot</span>
+                <p className="text-2xl font-bold font-mono text-red-400">
+                  {summaryData.hotspot_cells_count || 0}
+                </p>
+                <span className="text-[10px] text-red-400/70">Ağır Hasar Kümesi</span>
+              </div>
+              <div className="p-4 rounded-xl bg-zinc-950/60 border border-zinc-800 space-y-1">
+                <span className="text-xs text-zinc-400">❄️ Soğuk Nokta</span>
+                <p className="text-2xl font-bold font-mono text-blue-400">
+                  {summaryData.coldspot_cells_count || 0}
+                </p>
+                <span className="text-[10px] text-blue-400/70">Sağlam Alan Kümesi</span>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* Export Modal */}
+        {isExportOpen && activeJobId && (
+          <ExportModal
+            isOpen={isExportOpen}
+            jobId={activeJobId}
+            onClose={() => setIsExportOpen(false)}
+          />
+        )}
+      </main>
+    </div>
   );
 }
