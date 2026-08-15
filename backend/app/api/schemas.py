@@ -58,6 +58,7 @@ class JobCreate(BaseModel):
 class JobResponse(BaseModel):
     id: uuid.UUID
     aoi_id: uuid.UUID
+    aoi_name: Optional[str] = None
     created_by: uuid.UUID
     status: JobStatusEnum
     sar_status: Optional[str] = None

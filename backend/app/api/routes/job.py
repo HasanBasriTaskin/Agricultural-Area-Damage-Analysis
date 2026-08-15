@@ -6,7 +6,7 @@ from typing import List, Optional
 
 from app.api.schemas import JobCreate, JobResponse
 from app.infrastructure.db.database import get_db
-from app.infrastructure.db.models import User, AnalysisJob
+from app.infrastructure.db.models import User, AnalysisJob, AOI
 from app.infrastructure.repositories.sql_repositories import SQLAnalysisJobRepository
 from app.application.use_cases.job_use_cases import CreateJobUseCase
 from celery import chord
@@ -25,7 +25,8 @@ def get_create_job_use_case(repo: SQLAnalysisJobRepository = Depends(get_job_rep
 async def create_job(
     job_in: JobCreate,
     use_case: CreateJobUseCase = Depends(get_create_job_use_case),
-    current_user: User = Depends(get_current_user_or_default)
+    current_user: User = Depends(get_current_user_or_default),
+    db: AsyncSession = Depends(get_db)
 ):
     try:
         job = await use_case.execute(
@@ -35,6 +36,11 @@ async def create_job(
             weights_dict=job_in.weights
         )
         
+        # Fetch AOI name for response
+        aoi_stmt = select(AOI.name).where(AOI.id == job_in.aoi_id)
+        aoi_res = await db.execute(aoi_stmt)
+        aoi_name = aoi_res.scalar_one_or_none()
+
         job_id_str = str(job.id)
         
         # Trigger Celery Task (Chord: parallel SAR, MS, and Weather, then finalize)
@@ -42,7 +48,9 @@ async def create_job(
             [run_sar_pipeline.s(job_id_str), run_ms_pipeline.s(job_id_str), run_weather_pipeline.s(job_id_str)]
         )(finalize_pipeline.s(job_id_str))
         
-        return job
+        resp = JobResponse.model_validate(job)
+        resp.aoi_name = aoi_name
+        return resp
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
@@ -53,19 +61,42 @@ async def list_user_jobs(
     db: AsyncSession = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_current_user)
 ):
+    stmt = (
+        select(AnalysisJob, AOI.name.label("aoi_name"))
+        .outerjoin(AOI, AnalysisJob.aoi_id == AOI.id)
+        .order_by(AnalysisJob.created_at.desc())
+    )
     if current_user:
-        stmt = select(AnalysisJob).where(AnalysisJob.created_by == current_user.id).order_by(AnalysisJob.created_at.desc())
+        stmt = stmt.where(AnalysisJob.created_by == current_user.id)
     else:
-        stmt = select(AnalysisJob).order_by(AnalysisJob.created_at.desc()).limit(30)
+        stmt = stmt.limit(50)
+
     result = await db.execute(stmt)
-    return list(result.scalars().all())
+    rows = result.all()
+
+    out = []
+    for job, aoi_name in rows:
+        item = JobResponse.model_validate(job)
+        item.aoi_name = aoi_name or "İsimsiz Parsel"
+        out.append(item)
+    return out
 
 @router.get("/{job_id}", response_model=JobResponse)
 async def get_job(
     job_id: uuid.UUID,
-    repo: SQLAnalysisJobRepository = Depends(get_job_repo)
+    db: AsyncSession = Depends(get_db)
 ):
-    job = await repo.get_by_id(job_id)
-    if not job:
+    stmt = (
+        select(AnalysisJob, AOI.name.label("aoi_name"))
+        .outerjoin(AOI, AnalysisJob.aoi_id == AOI.id)
+        .where(AnalysisJob.id == job_id)
+    )
+    result = await db.execute(stmt)
+    row = result.first()
+    if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
-    return job
+    
+    job, aoi_name = row
+    item = JobResponse.model_validate(job)
+    item.aoi_name = aoi_name or "İsimsiz Parsel"
+    return item

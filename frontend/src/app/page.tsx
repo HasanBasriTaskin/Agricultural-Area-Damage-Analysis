@@ -118,8 +118,24 @@ export default function HomePage() {
       const qJobId = params.get("jobId");
       if (qJobId && qJobId !== activeJobId) {
         setActiveJobId(qJobId);
-        setJobStatus("done");
         const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+        
+        // Fetch job metadata
+        fetch(`${apiUrl}/api/v1/jobs/${qJobId}`).then(async (res) => {
+          if (res.ok) {
+            const jData = await res.json();
+            setAoiName(jData.aoi_name || "");
+            if (jData.event_date) {
+              setEventDate(jData.event_date.split("T")[0]);
+            }
+            setJobStatus(jData.status || "done");
+            setSarStatus(jData.sar_status || "done");
+            setMsStatus(jData.ms_status || "done");
+            setWeatherStatus(jData.weather_status || "done");
+          }
+        }).catch(err => console.error("Job meta fetch error:", err));
+
+        // Fetch analysis layers & summary
         Promise.all([
           fetch(`${apiUrl}/api/v1/jobs/${qJobId}/results/summary`),
           fetch(`${apiUrl}/api/v1/jobs/${qJobId}/results/grid`),
@@ -134,7 +150,7 @@ export default function HomePage() {
             const h = await hRes.json();
             setHotspotData(h.features || []);
           }
-          toast.success("Geçmiş analiz haritaya yüklendi.");
+          toast.success("Geçmiş analiz ve harita katmanları yüklendi.");
         }).catch(err => console.error(err));
       }
     }

@@ -14,7 +14,6 @@ const vertexIcon = L.divIcon({
 function MapResizeHandler() {
     const map = useMap();
     useEffect(() => {
-        // Initial invalidate
         const timer = setTimeout(() => {
             map.invalidateSize();
         }, 150);
@@ -31,6 +30,33 @@ function MapResizeHandler() {
             resizeObserver.disconnect();
         };
     }, [map]);
+    return null;
+}
+
+// Helper component to automatically zoom and fit bounds to AOI polygon and H3 grid cells
+function FitBoundsHandler({ gridFeatures, points }: { gridFeatures?: any[]; points?: [number, number][] }) {
+    const map = useMap();
+    useEffect(() => {
+        if (points && points.length >= 3) {
+            const bounds = L.latLngBounds(points);
+            map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
+        } else if (gridFeatures && gridFeatures.length > 0) {
+            const latlngs: [number, number][] = [];
+            gridFeatures.forEach((f: any) => {
+                if (f.geometry && f.geometry.coordinates) {
+                    const coords = f.geometry.coordinates[0];
+                    coords.forEach((pt: [number, number]) => {
+                        // GeoJSON is [lng, lat], Leaflet is [lat, lng]
+                        latlngs.push([pt[1], pt[0]]);
+                    });
+                }
+            });
+            if (latlngs.length > 0) {
+                const bounds = L.latLngBounds(latlngs);
+                map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
+            }
+        }
+    }, [gridFeatures, points, map]);
     return null;
 }
 
@@ -455,6 +481,7 @@ export default function MapComponent({
                 style={{ height: "100%", width: "100%", minHeight: "550px" }}
             >
                 <MapResizeHandler />
+                <FitBoundsHandler gridFeatures={gridFeatures} points={points} />
 
                 {/* Dynamic Base Tile Layer */}
                 {baseMap === 'esri' && (

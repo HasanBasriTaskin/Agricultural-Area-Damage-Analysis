@@ -20,8 +20,9 @@ export function Sidebar() {
   const pathname = usePathname();
   const { data: session, status } = useSession();
 
-  const userRole = session?.user?.role || "guest";
+  const userRole = session?.user?.role || "analyst";
   const isAdmin = userRole === "admin";
+  const isAuthenticated = status === "authenticated" && Boolean(session?.user?.email);
 
   const navItems = [
     {
@@ -127,38 +128,34 @@ export function Sidebar() {
       {/* Footer Profile & Actions */}
       <div className="p-4 border-t border-zinc-200 dark:border-zinc-800/80 space-y-3 bg-zinc-50/80 dark:bg-zinc-950/60 transition-colors">
         {/* User Card */}
-        {status === "authenticated" && session?.user ? (
-          <div className="p-2.5 rounded-xl bg-white dark:bg-zinc-900/80 border border-zinc-200 dark:border-zinc-800/90 flex items-center justify-between shadow-sm">
-            <div className="min-w-0 flex-1 pr-2">
-              <p className="text-xs font-semibold text-zinc-900 dark:text-zinc-200 truncate">
-                {session.user.email}
-              </p>
-              <div className="flex items-center gap-1.5 mt-0.5">
-                <span
-                  className={`text-[9px] px-1.5 py-0.2 rounded font-mono uppercase font-bold ${
-                    userRole === "admin"
-                      ? "bg-red-500/20 text-red-600 dark:text-red-400 border border-red-500/30"
-                      : userRole === "analyst"
-                      ? "bg-blue-500/20 text-blue-600 dark:text-blue-400 border border-blue-500/30"
-                      : "bg-zinc-200 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-400 border border-zinc-300 dark:border-zinc-700"
-                  }`}
-                >
-                  {userRole}
-                </span>
-                <span className="text-[10px] text-zinc-500">Aktif</span>
-              </div>
+        <div className="p-2.5 rounded-xl bg-white dark:bg-zinc-900/80 border border-zinc-200 dark:border-zinc-800/90 flex items-center justify-between shadow-sm">
+          <div className="min-w-0 flex-1 pr-2">
+            <p className="text-xs font-semibold text-zinc-900 dark:text-zinc-200 truncate">
+              {isAuthenticated ? session?.user?.email : "analyst@damage.org"}
+            </p>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <span
+                className={`text-[9px] px-1.5 py-0.2 rounded font-mono uppercase font-bold ${
+                  userRole === "admin"
+                    ? "bg-red-500/20 text-red-600 dark:text-red-400 border border-red-500/30"
+                    : userRole === "analyst"
+                    ? "bg-blue-500/20 text-blue-600 dark:text-blue-400 border border-blue-500/30"
+                    : "bg-zinc-200 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-400 border border-zinc-300 dark:border-zinc-700"
+                }`}
+              >
+                {userRole}
+              </span>
+              <span className="text-[10px] text-zinc-500">
+                {isAuthenticated ? "Aktif" : "Varsayılan"}
+              </span>
             </div>
           </div>
-        ) : (
-          <div className="p-2 rounded-xl bg-zinc-200/50 dark:bg-zinc-900/40 border border-zinc-300/60 dark:border-zinc-800/50 text-[11px] text-zinc-600 dark:text-zinc-400 text-center font-medium">
-            Misafir Oturumu
-          </div>
-        )}
+        </div>
 
         {/* Action Buttons: Theme Toggle & Login/Logout */}
         <div className="flex items-center justify-between gap-2">
           <ThemeToggle />
-          {status === "authenticated" ? (
+          {isAuthenticated ? (
             <button
               onClick={() => signOut({ callbackUrl: "/" })}
               className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-200/80 dark:bg-zinc-900 hover:bg-red-500/15 border border-zinc-300 dark:border-zinc-800 hover:border-red-500/40 text-zinc-700 dark:text-zinc-300 hover:text-red-600 dark:hover:text-red-400 text-xs font-semibold transition-all cursor-pointer shadow-sm"
@@ -172,7 +169,7 @@ export function Sidebar() {
               className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-all shadow-md shadow-emerald-900/20"
             >
               <LogIn className="w-3.5 h-3.5" />
-              <span>Giriş Yap</span>
+              <span>Giriş Yap / Değiştir</span>
             </Link>
           )}
         </div>
