@@ -150,6 +150,19 @@ async def get_results_summary(
         } if weather else None
     }
 
+def _to_shapely(geom_input: Any):
+    if geom_input is None:
+        return None
+    if isinstance(geom_input, str):
+        import shapely.wkt
+        return shapely.wkt.loads(geom_input)
+    try:
+        from geoalchemy2.shape import to_shape
+        return to_shape(geom_input)
+    except Exception:
+        import shapely.wkt
+        return shapely.wkt.loads(str(geom_input))
+
 @router.get("/{job_id}/results/timeseries")
 async def get_results_timeseries(
     job_id: uuid.UUID,
@@ -167,7 +180,7 @@ async def get_results_timeseries(
     if not aoi or not aoi.geometry:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="AOI geometry not found")
 
-    geom_shape = to_shape(aoi.geometry)
+    geom_shape = _to_shapely(aoi.geometry)
     cent = geom_shape.centroid
     ev_date = job.event_date if isinstance(job.event_date, date) else job.event_date.date()
 
@@ -202,7 +215,7 @@ async def get_layer_bounds(
     if not aoi or not aoi.geometry:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="AOI geometry not found")
 
-    geom_shape = to_shape(aoi.geometry)
+    geom_shape = _to_shapely(aoi.geometry)
     b = geom_shape.bounds # min_lon, min_lat, max_lon, max_lat
     return {
         "job_id": str(job_id),

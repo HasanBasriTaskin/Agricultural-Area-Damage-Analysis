@@ -189,25 +189,28 @@ class ExportService:
                 target_artifact = art
                 break
 
-        if not target_artifact:
-            # Fallback to local file if exists
-            local_path = f"temp_downloads/fusion_result_{job_id}.tif" if target_type == "FUSION_TIFF" else None
-            return {
-                "found": os.path.exists(local_path) if local_path else False,
-                "minio_key": None,
-                "download_url": None,
-                "local_path": local_path
-            }
+        local_fallback = None
+        if target_type == "FUSION_TIFF":
+            local_fallback = f"temp_downloads/fusion_result_{job_id}.tif"
+        elif target_type == "SAR_TIFF":
+            local_fallback = f"temp_downloads/sar_ard_{job_id}.tif"
+        elif target_type == "MS_TIFF":
+            local_fallback = f"temp_downloads/ms_harmonized_{job_id}.tif"
+
+        if target_artifact and target_artifact.minio_key and os.path.exists(target_artifact.minio_key):
+            local_fallback = target_artifact.minio_key
 
         download_url = None
-        try:
-            download_url = self.minio_client.get_presigned_download_url(target_artifact.minio_key, expires_seconds=3600)
-        except Exception:
-            pass
+        if target_artifact:
+            try:
+                download_url = self.minio_client.get_presigned_download_url(target_artifact.minio_key, expires_seconds=3600)
+            except Exception:
+                pass
 
         return {
-            "found": True,
-            "minio_key": target_artifact.minio_key,
+            "found": True if (target_artifact or (local_fallback and os.path.exists(local_fallback))) else False,
+            "minio_key": target_artifact.minio_key if target_artifact else None,
             "download_url": download_url,
-            "file_type": target_artifact.file_type
+            "file_type": target_artifact.file_type if target_artifact else target_type,
+            "local_path": local_fallback if (local_fallback and os.path.exists(local_fallback)) else None
         }

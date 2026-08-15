@@ -267,24 +267,43 @@ async def export_geotiff(
     minio_key = info.get("minio_key")
     if minio_key:
         try:
-            from fastapi.responses import StreamingResponse
             from app.infrastructure.external.minio_client import MinioStorageClient
             client = MinioStorageClient()
             minio_obj = client.get_object(minio_key)
-            return StreamingResponse(
-                minio_obj.stream(32 * 1024),
-                media_type="image/tiff",
-                headers={"Content-Disposition": f"attachment; filename={layer}_{job_id}.tif"}
-            )
+            data = minio_obj.read()
+            minio_obj.close()
+            minio_obj.release_conn()
+            if data and len(data) > 0:
+                return Response(
+                    content=data,
+                    media_type="image/tiff",
+                    headers={"Content-Disposition": f"attachment; filename={layer}_{job_id}.tif"}
+                )
         except Exception:
             pass
 
     local_path = info.get("local_path")
     if local_path and os.path.exists(local_path):
-        return FileResponse(
-            path=local_path,
-            media_type="image/tiff",
-            filename=f"{layer}_{job_id}.tif"
-        )
+        with open(local_path, "rb") as f:
+            return Response(
+                content=f.read(),
+                media_type="image/tiff",
+                headers={"Content-Disposition": f"attachment; filename={layer}_{job_id}.tif"}
+            )
+
+    # Check candidate standard fallback filenames
+    candidates = [
+        f"temp_downloads/fusion_result_{job_id}.tif",
+        f"temp_downloads/sar_ard_{job_id}.tif",
+        f"temp_downloads/ms_harmonized_{job_id}.tif",
+    ]
+    for c in candidates:
+        if os.path.exists(c):
+            with open(c, "rb") as f:
+                return Response(
+                    content=f.read(),
+                    media_type="image/tiff",
+                    headers={"Content-Disposition": f"attachment; filename={layer}_{job_id}.tif"}
+                )
 
     raise HTTPException(status_code=404, detail=f"GeoTIFF for layer '{layer}' not found")
