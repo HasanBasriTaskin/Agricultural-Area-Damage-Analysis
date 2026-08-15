@@ -11,6 +11,11 @@ class Settings(BaseSettings):
     MINIO_BUCKET_NAME: str = os.getenv("MINIO_BUCKET_NAME", "damage-analysis-artifacts")
     MINIO_SECURE: bool = os.getenv("MINIO_SECURE", "false").lower() == "true"
 
+    # JWT Authentication Settings
+    SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "tarimsal-hasar-analizi-super-secret-jwt-key-2026")
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))  # 24 Hours
+
     # Weather Verification Thresholds
     WEATHER_PRECIPITATION_THRESHOLD_MM: float = 30.0  # >30mm means flood/heavy rain anomaly
     WEATHER_WIND_SPEED_THRESHOLD_KMH: float = 60.0  # >60kmh means storm anomaly

@@ -1,16 +1,17 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 import uuid
+from typing import List
 
 from app.api.schemas import JobCreate, JobResponse
 from app.infrastructure.db.database import get_db
+from app.infrastructure.db.models import User, AnalysisJob
 from app.infrastructure.repositories.sql_repositories import SQLAnalysisJobRepository
 from app.application.use_cases.job_use_cases import CreateJobUseCase
 from celery import chord
 from app.infrastructure.tasks import run_sar_pipeline, run_ms_pipeline, run_weather_pipeline, finalize_pipeline
-
-# For now, simulate authenticated user ID
-DEMO_USER_ID = uuid.UUID("c2cb63b8-acc5-4384-a09b-47b81de325e6")
+from app.api.deps import get_current_user
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -23,13 +24,14 @@ def get_create_job_use_case(repo: SQLAnalysisJobRepository = Depends(get_job_rep
 @router.post("/", response_model=JobResponse, status_code=status.HTTP_201_CREATED)
 async def create_job(
     job_in: JobCreate,
-    use_case: CreateJobUseCase = Depends(get_create_job_use_case)
+    use_case: CreateJobUseCase = Depends(get_create_job_use_case),
+    current_user: User = Depends(get_current_user)
 ):
     try:
         job = await use_case.execute(
             aoi_id=job_in.aoi_id,
             event_date=job_in.event_date,
-            created_by=DEMO_USER_ID,
+            created_by=current_user.id,
             weights_dict=job_in.weights
         )
         
@@ -46,8 +48,21 @@ async def create_job(
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
+@router.get("/", response_model=List[JobResponse])
+async def list_user_jobs(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    stmt = select(AnalysisJob).where(AnalysisJob.created_by == current_user.id).order_by(AnalysisJob.created_at.desc())
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
 @router.get("/{job_id}", response_model=JobResponse)
-async def get_job(job_id: uuid.UUID, repo: SQLAnalysisJobRepository = Depends(get_job_repo)):
+async def get_job(
+    job_id: uuid.UUID,
+    repo: SQLAnalysisJobRepository = Depends(get_job_repo),
+    current_user: User = Depends(get_current_user)
+):
     job = await repo.get_by_id(job_id)
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
