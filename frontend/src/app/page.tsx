@@ -9,20 +9,20 @@ import { Sidebar } from '@/components/Sidebar';
 
 // Helper: single pipeline status row
 function statusColor(status: string | null) {
-  if (status === 'done') return 'text-green-400';
-  if (status === 'failed') return 'text-red-400';
-  if (status === 'processing') return 'text-blue-400';
-  return 'text-zinc-500';
+  if (status === 'done') return 'text-emerald-600 dark:text-green-400';
+  if (status === 'failed') return 'text-red-600 dark:text-red-400';
+  if (status === 'processing') return 'text-blue-600 dark:text-blue-400';
+  return 'text-zinc-400 dark:text-zinc-500';
 }
 
 function PipelineRow({ label, status }: { label: string; status: string | null }) {
   const isRunning = status && status !== 'done' && status !== 'failed';
   return (
-    <div className="flex items-center justify-between py-1.5 border-t border-zinc-800/60 mt-2">
-      <span className="text-xs text-zinc-400">{label}</span>
+    <div className="flex items-center justify-between py-1.5 border-t border-zinc-200 dark:border-zinc-800/60 mt-2">
+      <span className="text-xs text-zinc-600 dark:text-zinc-400">{label}</span>
       <div className="flex items-center gap-2">
         {isRunning && (
-          <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+          <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
         )}
         <span className={`text-xs font-semibold uppercase ${statusColor(status)}`}>
           {status || 'queued'}
@@ -61,7 +61,6 @@ export default function HomePage() {
   const [summaryData, setSummaryData] = useState<any | null>(null);
   const [gridData, setGridData] = useState<any[]>([]);
   const [hotspotData, setHotspotData] = useState<any[]>([]);
-  const [showGridList, setShowGridList] = useState(false);
   const [isExportOpen, setIsExportOpen] = useState(false);
 
   const MAX_AREA_HA = 25000;
@@ -71,7 +70,7 @@ export default function HomePage() {
     () => dynamic(() => import('@/components/Map'), {
       ssr: false,
       loading: () => (
-        <div className="w-full h-full rounded-xl bg-zinc-900 flex items-center justify-center text-zinc-500">
+        <div className="w-full h-full rounded-xl bg-zinc-200 dark:bg-zinc-900 flex items-center justify-center text-zinc-500">
           Harita yükleniyor...
         </div>
       ),
@@ -107,24 +106,9 @@ export default function HomePage() {
     handleResetAll(false);
   };
 
-  // Helper to obtain a valid Bearer token (from NextAuth or fallback demo user)
-  const getAuthToken = async (): Promise<string | null> => {
-    if (session?.accessToken) return session.accessToken;
-    try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      const res = await fetch(`${apiUrl}/api/v1/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: 'analyst@damage.org', password: 'Analyst123!' })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        return data.access_token;
-      }
-    } catch (e) {
-      console.error("Auto login token error:", e);
-    }
-    return null;
+  // Helper to obtain a valid Bearer token (if present)
+  const getAuthToken = (): string | null => {
+    return session?.accessToken || null;
   };
 
   // Load job from URL search param if present (e.g., from /jobs page view link)
@@ -163,7 +147,7 @@ export default function HomePage() {
     setIsCleaning(true);
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      const token = await getAuthToken();
+      const token = getAuthToken();
       const res = await fetch(`${apiUrl}/api/v1/system/clean-storage`, {
         method: 'POST',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -209,7 +193,7 @@ export default function HomePage() {
 
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      const token = await getAuthToken();
+      const token = getAuthToken();
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (token) {
         headers['Authorization'] = `Bearer ${token}`;
@@ -272,7 +256,11 @@ export default function HomePage() {
     const interval = setInterval(async () => {
       try {
         const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-        const res = await fetch(`${apiUrl}/api/v1/jobs/${activeJobId}`);
+        const token = getAuthToken();
+        const headers: Record<string, string> = {};
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
+        const res = await fetch(`${apiUrl}/api/v1/jobs/${activeJobId}`, { headers });
         if (res.ok) {
           const data = await res.json();
           setJobStatus(data.status);
@@ -284,9 +272,9 @@ export default function HomePage() {
             // Fetch summary, grid, and hotspots results
             try {
               const [summaryRes, gridRes, hsRes] = await Promise.all([
-                fetch(`${apiUrl}/api/v1/jobs/${activeJobId}/results/summary`),
-                fetch(`${apiUrl}/api/v1/jobs/${activeJobId}/results/grid`),
-                fetch(`${apiUrl}/api/v1/jobs/${activeJobId}/results/hotspots`)
+                fetch(`${apiUrl}/api/v1/jobs/${activeJobId}/results/summary`, { headers }),
+                fetch(`${apiUrl}/api/v1/jobs/${activeJobId}/results/grid`, { headers }),
+                fetch(`${apiUrl}/api/v1/jobs/${activeJobId}/results/hotspots`, { headers })
               ]);
               if (summaryRes.ok) {
                 const sData = await summaryRes.json();
@@ -317,19 +305,19 @@ export default function HomePage() {
   }, [activeJobId, jobStatus]);
 
   return (
-    <div className="min-h-screen flex bg-zinc-950 text-zinc-100 selection:bg-emerald-500 selection:text-black">
+    <div className="min-h-screen flex bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 transition-colors duration-200 selection:bg-emerald-500 selection:text-black">
       {/* Navigation Sidebar */}
       <Sidebar />
 
       {/* Main Content Area */}
       <main className="flex-1 flex flex-col p-6 space-y-6 overflow-y-auto max-w-[1700px]">
         {/* Top Header Banner */}
-        <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-800">
+        <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-200 dark:border-zinc-800">
           <div>
-            <h1 className="text-xl font-bold tracking-tight text-zinc-100 flex items-center gap-2">
+            <h1 className="text-xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
               <span>🌾</span> SAR + MS Tarımsal Hasar Analiz Platformu
             </h1>
-            <p className="text-xs text-zinc-400 mt-0.5">
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
               Çoklu sensör uydu füzyonu, H3 uzamsal birikim ve meteorolojik afet değerlendirme sistemi.
             </p>
           </div>
@@ -338,7 +326,7 @@ export default function HomePage() {
             <button
               onClick={handleCleanStorage}
               disabled={isCleaning}
-              className="px-3 py-1.5 rounded-xl border border-zinc-800 bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+              className="px-3 py-1.5 rounded-xl border border-zinc-300 dark:border-zinc-800 bg-white dark:bg-zinc-900/80 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm cursor-pointer disabled:opacity-50"
               title="Önbellek ve geçici dosyaları temizle"
             >
               <span>🧹</span>
@@ -346,7 +334,7 @@ export default function HomePage() {
             </button>
             <button
               onClick={() => handleResetAll(true)}
-              className="px-3 py-1.5 rounded-xl border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 text-red-300 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
+              className="px-3 py-1.5 rounded-xl border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-300 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
             >
               <span>🗑️</span>
               <span>Tümünü Sıfırla</span>
@@ -357,7 +345,7 @@ export default function HomePage() {
         {/* Workspace: Map + Control Sidebar */}
         <section className="flex flex-col lg:flex-row gap-6 flex-1 min-h-[620px] items-stretch">
           {/* Map Area */}
-          <div className="flex-1 min-h-[550px] rounded-2xl relative overflow-hidden border border-zinc-800 shadow-2xl">
+          <div className="flex-1 min-h-[550px] rounded-2xl relative overflow-hidden border border-zinc-300 dark:border-zinc-800 shadow-xl">
             <MapComponent
               onPolygonChange={handlePolygonChange}
               gridFeatures={gridData}
@@ -369,42 +357,41 @@ export default function HomePage() {
           </div>
 
           {/* Form & Controls Panel */}
-          <div className="w-full lg:w-96 flex flex-col gap-4 bg-zinc-900/60 p-6 rounded-2xl border border-zinc-800/80 backdrop-blur-md overflow-y-auto">
+          <div className="w-full lg:w-96 flex flex-col gap-4 bg-white dark:bg-zinc-900/60 p-6 rounded-2xl border border-zinc-200 dark:border-zinc-800/80 shadow-lg backdrop-blur-md overflow-y-auto transition-colors">
             <div>
-              <h2 className="text-base font-semibold text-zinc-100 flex items-center gap-2">
+              <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
                 <span>🎯</span> Yeni Analiz Başlat
               </h2>
-              <p className="text-xs text-zinc-400 mt-1">Harita üzerinden parselinizi çizin ve afet tarihini seçin.</p>
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">Harita üzerinden parselinizi çizin ve afet tarihini seçin.</p>
             </div>
 
             <div className="space-y-3.5 mt-1">
               <div className="space-y-1">
-                <label className="text-xs font-medium text-zinc-300">Tarla / Alan Adı</label>
+                <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Tarla / Alan Adı</label>
                 <input
                   type="text"
                   value={aoiName}
                   onChange={(e) => setAoiName(e.target.value)}
                   placeholder="Örn: Manisa Buğday Parseli"
-                  className="flex h-9 w-full rounded-xl border border-zinc-700/80 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-emerald-500"
+                  className="flex h-9 w-full rounded-xl border border-zinc-300 dark:border-zinc-700/80 bg-zinc-50 dark:bg-zinc-950 px-3 py-1.5 text-xs text-zinc-900 dark:text-zinc-200 placeholder:text-zinc-400 focus:outline-none focus:border-emerald-500"
                 />
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-medium text-zinc-300">Olay Tarihi (Afet)</label>
+                <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Olay Tarihi (Afet)</label>
                 <input
                   type="date"
                   value={eventDate}
                   onChange={(e) => setEventDate(e.target.value)}
-                  className="flex h-9 w-full rounded-xl border border-zinc-700/80 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-200 focus:outline-none focus:border-emerald-500"
-                  style={{ colorScheme: 'dark' }}
+                  className="flex h-9 w-full rounded-xl border border-zinc-300 dark:border-zinc-700/80 bg-zinc-50 dark:bg-zinc-950 px-3 py-1.5 text-xs text-zinc-900 dark:text-zinc-200 focus:outline-none focus:border-emerald-500"
                 />
               </div>
 
               <div className="space-y-1">
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-medium text-zinc-300">Seçili Alan (WKT)</label>
+                  <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Seçili Alan (WKT)</label>
                   {areaHa > 0 && (
-                    <span className="text-[11px] font-semibold text-emerald-400 font-mono">
+                    <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 font-mono">
                       {Math.round(areaHa).toLocaleString('tr-TR')} ha
                     </span>
                   )}
@@ -413,7 +400,7 @@ export default function HomePage() {
                   readOnly
                   rows={2}
                   value={wkt || "Henüz alan çizilmedi..."}
-                  className="flex w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-[11px] text-zinc-400 font-mono focus:outline-none resize-none"
+                  className="flex w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-950 px-3 py-1.5 text-[11px] text-zinc-600 dark:text-zinc-400 font-mono focus:outline-none resize-none"
                 />
               </div>
 
@@ -422,32 +409,32 @@ export default function HomePage() {
                 <button
                   type="button"
                   onClick={() => setShowWeights(!showWeights)}
-                  className="text-xs text-emerald-400 hover:text-emerald-300 font-medium cursor-pointer"
+                  className="text-xs text-emerald-600 dark:text-emerald-400 hover:underline font-semibold cursor-pointer"
                 >
                   {showWeights ? "▲ Ağırlık Ayarlarını Gizle" : "▼ Füzyon Ağırlıklarını Ayarla (Opsiyonel)"}
                 </button>
 
                 {showWeights && (
-                  <div className="grid grid-cols-2 gap-2 p-3 bg-zinc-950/80 border border-zinc-800 rounded-xl mt-1 text-xs">
+                  <div className="grid grid-cols-2 gap-2 p-3 bg-zinc-100 dark:bg-zinc-950/80 border border-zinc-200 dark:border-zinc-800 rounded-xl mt-1 text-xs">
                     <div>
-                      <label className="text-[10px] text-zinc-400">SAR Ağırlığı</label>
-                      <input type="number" step="0.01" value={weightSar} onChange={e => setWeightSar(parseFloat(e.target.value) || 0)} className="w-full h-7 rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-200" />
+                      <label className="text-[10px] text-zinc-500 dark:text-zinc-400">SAR Ağırlığı</label>
+                      <input type="number" step="0.01" value={weightSar} onChange={e => setWeightSar(parseFloat(e.target.value) || 0)} className="w-full h-7 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 text-xs text-zinc-900 dark:text-zinc-200" />
                     </div>
                     <div>
-                      <label className="text-[10px] text-zinc-400">NDMI Ağırlığı</label>
-                      <input type="number" step="0.01" value={weightNdmi} onChange={e => setWeightNdmi(parseFloat(e.target.value) || 0)} className="w-full h-7 rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-200" />
+                      <label className="text-[10px] text-zinc-500 dark:text-zinc-400">NDMI Ağırlığı</label>
+                      <input type="number" step="0.01" value={weightNdmi} onChange={e => setWeightNdmi(parseFloat(e.target.value) || 0)} className="w-full h-7 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 text-xs text-zinc-900 dark:text-zinc-200" />
                     </div>
                     <div>
-                      <label className="text-[10px] text-zinc-400">NDRE Ağırlığı</label>
-                      <input type="number" step="0.01" value={weightNdre} onChange={e => setWeightNdre(parseFloat(e.target.value) || 0)} className="w-full h-7 rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-200" />
+                      <label className="text-[10px] text-zinc-500 dark:text-zinc-400">NDRE Ağırlığı</label>
+                      <input type="number" step="0.01" value={weightNdre} onChange={e => setWeightNdre(parseFloat(e.target.value) || 0)} className="w-full h-7 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 text-xs text-zinc-900 dark:text-zinc-200" />
                     </div>
                     <div>
-                      <label className="text-[10px] text-zinc-400">Yağış Ağırlığı</label>
-                      <input type="number" step="0.01" value={weightPrecip} onChange={e => setWeightPrecip(parseFloat(e.target.value) || 0)} className="w-full h-7 rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-200" />
+                      <label className="text-[10px] text-zinc-500 dark:text-zinc-400">Yağış Ağırlığı</label>
+                      <input type="number" step="0.01" value={weightPrecip} onChange={e => setWeightPrecip(parseFloat(e.target.value) || 0)} className="w-full h-7 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 text-xs text-zinc-900 dark:text-zinc-200" />
                     </div>
                     <div className="col-span-2">
-                      <label className="text-[10px] text-zinc-400">Toprak Nemi Ağırlığı</label>
-                      <input type="number" step="0.01" value={weightSm} onChange={e => setWeightSm(parseFloat(e.target.value) || 0)} className="w-full h-7 rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-200" />
+                      <label className="text-[10px] text-zinc-500 dark:text-zinc-400">Toprak Nemi Ağırlığı</label>
+                      <input type="number" step="0.01" value={weightSm} onChange={e => setWeightSm(parseFloat(e.target.value) || 0)} className="w-full h-7 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 text-xs text-zinc-900 dark:text-zinc-200" />
                     </div>
                   </div>
                 )}
@@ -458,7 +445,7 @@ export default function HomePage() {
                 <button 
                   onClick={handleSave}
                   disabled={isSaving || !wkt || areaHa > MAX_AREA_HA || (activeJobId !== null && jobStatus !== 'done' && jobStatus !== 'failed')}
-                  className="w-full h-11 inline-flex items-center justify-center rounded-xl text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-all shadow-lg shadow-emerald-950/40 disabled:opacity-50 disabled:pointer-events-none cursor-pointer"
+                  className="w-full h-11 inline-flex items-center justify-center rounded-xl text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-all shadow-lg shadow-emerald-950/20 disabled:opacity-50 disabled:pointer-events-none cursor-pointer"
                 >
                   {isSaving ? "Analiz Başlatılıyor..." : "🚀 Analizi Başlat"}
                 </button>
@@ -467,9 +454,9 @@ export default function HomePage() {
 
             {/* Pipeline Status Cards */}
             {activeJobId && (
-              <div className="bg-zinc-950/80 p-4 rounded-xl border border-zinc-800 space-y-2 mt-auto">
-                <div className="flex items-center justify-between text-xs font-medium pb-2 border-b border-zinc-800">
-                  <span className="text-zinc-400">İşlem Durumu</span>
+              <div className="bg-zinc-100 dark:bg-zinc-950/80 p-4 rounded-xl border border-zinc-200 dark:border-zinc-800 space-y-2 mt-auto">
+                <div className="flex items-center justify-between text-xs font-medium pb-2 border-b border-zinc-200 dark:border-zinc-800">
+                  <span className="text-zinc-600 dark:text-zinc-400">İşlem Durumu</span>
                   <span className={`font-bold uppercase ${statusColor(jobStatus)}`}>
                     {jobStatus || "Bekleniyor"}
                   </span>
@@ -482,7 +469,7 @@ export default function HomePage() {
           </div>
         </section>
 
-        {/* 30-Day Meteorological Time Series Chart (Sprint 8) */}
+        {/* 30-Day Meteorological Time Series Chart */}
         {activeJobId && summaryData && (
           <section className="mt-2">
             <TimeSeriesChart jobId={activeJobId} />
@@ -491,17 +478,17 @@ export default function HomePage() {
 
         {/* Results & Statistical Dashboard */}
         {activeJobId && summaryData && (
-          <section className="bg-zinc-900/60 p-6 rounded-2xl border border-zinc-800/80 space-y-6 shadow-xl backdrop-blur-md">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-800">
+          <section className="bg-white dark:bg-zinc-900/60 p-6 rounded-2xl border border-zinc-200 dark:border-zinc-800/80 space-y-6 shadow-xl backdrop-blur-md">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-200 dark:border-zinc-800">
               <div>
-                <h2 className="text-lg font-bold text-zinc-100 flex items-center gap-2">
+                <h2 className="text-lg font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
                   <span>📊</span> Hasar Değerlendirme & İstatistiksel Rapor
                 </h2>
-                <p className="text-xs text-zinc-400 mt-0.5">H3 Grid hücresel ayrıştırma ve çoklu sensör analiz sonuçları.</p>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">H3 Grid hücresel ayrıştırma ve çoklu sensör analiz sonuçları.</p>
               </div>
               <button
                 onClick={() => setIsExportOpen(true)}
-                className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-semibold flex items-center gap-2 shadow-lg shadow-emerald-950/40 transition-all cursor-pointer"
+                className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-semibold flex items-center gap-2 shadow-lg shadow-emerald-950/30 transition-all cursor-pointer"
               >
                 <span>📥</span>
                 <span>Rapor & Çıktıları İndir</span>
@@ -510,33 +497,33 @@ export default function HomePage() {
 
             {/* Metric Overview Cards */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="p-4 rounded-xl bg-zinc-950/60 border border-zinc-800 space-y-1">
-                <span className="text-xs text-zinc-400">Ortalama Hasar</span>
-                <p className="text-2xl font-bold font-mono text-emerald-400">
+              <div className="p-4 rounded-xl bg-zinc-100 dark:bg-zinc-950/60 border border-zinc-200 dark:border-zinc-800 space-y-1">
+                <span className="text-xs text-zinc-500 dark:text-zinc-400">Ortalama Hasar</span>
+                <p className="text-2xl font-bold font-mono text-emerald-600 dark:text-emerald-400">
                   %{Math.round((summaryData.mean_damage_score || 0) * 100)}
                 </p>
                 <span className="text-[10px] text-zinc-500">Tüm Parsel Geneli</span>
               </div>
-              <div className="p-4 rounded-xl bg-zinc-950/60 border border-zinc-800 space-y-1">
-                <span className="text-xs text-zinc-400">Toplam Hücre</span>
-                <p className="text-2xl font-bold font-mono text-zinc-100">
+              <div className="p-4 rounded-xl bg-zinc-100 dark:bg-zinc-950/60 border border-zinc-200 dark:border-zinc-800 space-y-1">
+                <span className="text-xs text-zinc-500 dark:text-zinc-400">Toplam Hücre</span>
+                <p className="text-2xl font-bold font-mono text-zinc-900 dark:text-zinc-100">
                   {summaryData.total_cells || 0}
                 </p>
                 <span className="text-[10px] text-zinc-500">H3 Resolution 9</span>
               </div>
-              <div className="p-4 rounded-xl bg-zinc-950/60 border border-zinc-800 space-y-1">
-                <span className="text-xs text-zinc-400">🔥 Kritik Hotspot</span>
-                <p className="text-2xl font-bold font-mono text-red-400">
+              <div className="p-4 rounded-xl bg-zinc-100 dark:bg-zinc-950/60 border border-zinc-200 dark:border-zinc-800 space-y-1">
+                <span className="text-xs text-zinc-500 dark:text-zinc-400">🔥 Kritik Hotspot</span>
+                <p className="text-2xl font-bold font-mono text-red-600 dark:text-red-400">
                   {summaryData.hotspot_cells_count || 0}
                 </p>
-                <span className="text-[10px] text-red-400/70">Ağır Hasar Kümesi</span>
+                <span className="text-[10px] text-red-600/70 dark:text-red-400/70">Ağır Hasar Kümesi</span>
               </div>
-              <div className="p-4 rounded-xl bg-zinc-950/60 border border-zinc-800 space-y-1">
-                <span className="text-xs text-zinc-400">❄️ Soğuk Nokta</span>
-                <p className="text-2xl font-bold font-mono text-blue-400">
+              <div className="p-4 rounded-xl bg-zinc-100 dark:bg-zinc-950/60 border border-zinc-200 dark:border-zinc-800 space-y-1">
+                <span className="text-xs text-zinc-500 dark:text-zinc-400">❄️ Soğuk Nokta</span>
+                <p className="text-2xl font-bold font-mono text-blue-600 dark:text-blue-400">
                   {summaryData.coldspot_cells_count || 0}
                 </p>
-                <span className="text-[10px] text-blue-400/70">Sağlam Alan Kümesi</span>
+                <span className="text-[10px] text-blue-600/70 dark:text-blue-400/70">Sağlam Alan Kümesi</span>
               </div>
             </div>
           </section>

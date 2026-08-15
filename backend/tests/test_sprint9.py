@@ -32,17 +32,17 @@ async def test_sprint9():
         assert me_res.json()["email"] == "admin@damage.org"
         print("✓ S9-T1: /auth/me returned authenticated user details")
 
-        # 4. S9-T2: AOI creation requires token (401 without token)
-        no_auth_aoi = await client.post("/aoi/", json={
-            "name": "Test Field",
+        # 4. S9-T2: Guest AOI creation automatically falls back to default demo user
+        guest_aoi = await client.post("/aoi/", json={
+            "name": "Guest Field",
             "geometry": "POLYGON((32.0 39.0, 32.1 39.0, 32.1 39.1, 32.0 39.1, 32.0 39.0))"
         })
-        assert no_auth_aoi.status_code == 401, f"Expected 401 without token, got: {no_auth_aoi.status_code}"
-        print("✓ S9-T2: Unauthenticated AOI creation blocked with 401")
+        assert guest_aoi.status_code == 201, f"Expected 201 for guest AOI, got: {guest_aoi.status_code}"
+        print("✓ S9-T2: Guest AOI creation seamlessly attached to default system user")
 
         # 5. AOI creation with token
         auth_aoi = await client.post("/aoi/", json={
-            "name": "Test Token Field",
+            "name": "Admin Token Field",
             "geometry": "POLYGON((32.0 39.0, 32.1 39.0, 32.1 39.1, 32.0 39.1, 32.0 39.0))"
         }, headers={"Authorization": f"Bearer {admin_token}"})
         assert auth_aoi.status_code == 201, f"AOI creation with token failed: {auth_aoi.text}"

@@ -39,31 +39,43 @@ export const authOptions: NextAuthOptions = {
           return null;
         }
 
-        try {
-          const apiUrl = process.env.INTERNAL_API_URL || process.env.NEXT_PUBLIC_API_URL || "http://api:8000";
-          const res = await fetch(`${apiUrl}/api/v1/auth/login`, {
-            method: "POST",
-            body: JSON.stringify({
-              email: credentials.email,
-              password: credentials.password
-            }),
-            headers: { "Content-Type": "application/json" }
-          });
+        // Try Docker internal DNS first, then external/env URL
+        const candidateUrls = [
+          process.env.INTERNAL_API_URL || "http://api:8000",
+          "http://api:8000",
+          process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000",
+        ];
 
-          const data = await res.json();
-          if (res.ok && data?.access_token) {
-            return {
-              id: data.user.id,
-              email: data.user.email,
-              name: data.user.email.split("@")[0],
-              role: data.user.role,
-              access_token: data.access_token
-            };
+        for (const baseUrl of candidateUrls) {
+          try {
+            const res = await fetch(`${baseUrl}/api/v1/auth/login`, {
+              method: "POST",
+              body: JSON.stringify({
+                email: credentials.email,
+                password: credentials.password
+              }),
+              headers: { "Content-Type": "application/json" }
+            });
+
+            if (res.ok) {
+              const data = await res.json();
+              if (data?.access_token) {
+                return {
+                  id: data.user.id,
+                  email: data.user.email,
+                  name: data.user.email.split("@")[0],
+                  role: data.user.role,
+                  access_token: data.access_token
+                };
+              }
+            }
+          } catch (error) {
+            // Try next candidate URL
+            continue;
           }
-        } catch (error) {
-          console.error("Auth authorize error:", error);
         }
 
+        console.error("NextAuth authorize: All backend login URL attempts failed for", credentials.email);
         return null;
       }
     })

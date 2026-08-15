@@ -11,10 +11,44 @@ from app.core.security import decode_access_token
 
 security_bearer = HTTPBearer(auto_error=False)
 
+async def get_optional_current_user(
+    auth: Optional[HTTPAuthorizationCredentials] = Depends(security_bearer),
+    db: AsyncSession = Depends(get_db)
+) -> Optional[User]:
+    """
+    Returns authenticated user if a valid bearer token is provided, or None if guest.
+    """
+    if not auth or not auth.credentials:
+        return None
+
+    token = auth.credentials
+    payload = decode_access_token(token)
+    if not payload:
+        return None
+
+    user_id_str: Optional[str] = payload.get("sub")
+    if not user_id_str:
+        return None
+
+    try:
+        user_id = uuid.UUID(user_id_str)
+    except ValueError:
+        return None
+
+    stmt = select(User).where(User.id == user_id)
+    result = await db.execute(stmt)
+    user = result.scalar_one_or_none()
+    if user and user.is_active:
+        return user
+    return None
+
 async def get_current_user(
     auth: Optional[HTTPAuthorizationCredentials] = Depends(security_bearer),
     db: AsyncSession = Depends(get_db)
 ) -> User:
+    """
+    Strict authentication dependency. Raises 401 if missing or invalid.
+    """
     if not auth or not auth.credentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -66,6 +100,38 @@ async def get_current_user(
         )
 
     return user
+
+async def get_current_user_or_default(
+    auth: Optional[HTTPAuthorizationCredentials] = Depends(security_bearer),
+    db: AsyncSession = Depends(get_db)
+) -> User:
+    """
+    Returns the authenticated user if token is present, or falls back to the default
+    system user (e.g. analyst@damage.org) for guest/demo interactions.
+    """
+    optional_user = await get_optional_current_user(auth=auth, db=db)
+    if optional_user:
+        return optional_user
+
+    # Fallback to default user
+    stmt = select(User).where(User.email == "analyst@damage.org")
+    result = await db.execute(stmt)
+    default_user = result.scalar_one_or_none()
+
+    if not default_user:
+        # If not found, get any active user
+        stmt_any = select(User).where(User.is_active == True).limit(1)
+        res_any = await db.execute(stmt_any)
+        default_user = res_any.scalar_one_or_none()
+
+    if not default_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Sistemde aktif kullanıcı bulunamadı. Lütfen oturum açınız.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return default_user
 
 def require_roles(allowed_roles: List[RoleEnum]):
     """
