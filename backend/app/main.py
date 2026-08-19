@@ -2,8 +2,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from app.api.routes import aoi, job, results, export, system, auth, admin_users, admin_jobs, health
-from app.infrastructure.db.database import AsyncSessionLocal
-from app.infrastructure.db.models import User, RoleEnum
+from app.infrastructure.db.database import AsyncSessionLocal, engine
+from app.infrastructure.db.models import Base, User, RoleEnum
 from app.core.security import get_password_hash
 from sqlalchemy import select
 
@@ -35,11 +35,13 @@ async def seed_initial_users():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: seed default users
+    # Startup: ensure tables exist and seed default users
     try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
         await seed_initial_users()
     except Exception as e:
-        print(f"User seeding note: {e}")
+        print(f"Startup DB init / seeding note: {e}")
     yield
 
 app = FastAPI(
