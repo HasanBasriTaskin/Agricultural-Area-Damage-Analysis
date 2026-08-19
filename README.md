@@ -82,6 +82,69 @@ matematiksel olarak birleştirerek saniyeler içerisinde resmi onaylı hasar rap
 
 ---
 
+## ⚙️ Ortam Değişkenleri (.env) Yapılandırma Rehberi
+
+Platformun farklı ortam ve geliştirme senaryoları için **3 adet `.env` şablonu** bulunmaktadır:
+
+### 1. Ana Dizin `.env` (Docker Compose İçin Birincil Dosya)
+Tüm servislerin (`postgres`, `redis`, `minio`, `api`, `worker`, `frontend`) ortaklaşa kullandığı ana dosyadır:
+```bash
+# Örnek şablondan kopyalayarak oluşturun
+cp .env.example .env
+```
+İçerik özeti:
+```ini
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_DB=damage_analysis
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/damage_analysis
+REDIS_URL=redis://redis:6379/0
+MINIO_ENDPOINT=minio:9000
+MINIO_ACCESS_KEY=minioadmin
+MINIO_SECRET_KEY=minioadmin
+MINIO_BUCKET_NAME=damage-analysis-artifacts
+MINIO_SECURE=false
+JWT_SECRET_KEY=tarimsal-hasar-analizi-super-secret-jwt-key-2026
+ACCESS_TOKEN_EXPIRE_MINUTES=1440
+NEXTAUTH_URL=http://localhost:3000
+NEXTAUTH_SECRET=tarimsal-hasar-nextauth-super-secret-key-2026
+NEXT_PUBLIC_API_URL=http://localhost:8000
+INTERNAL_API_URL=http://api:8000
+```
+
+### 2. Backend İzole Geliştirme Dosyası (`backend/.env`)
+Docker olmadan yerel Python ortamında (`uvicorn` / `celery`) test yapmak isterseniz:
+```bash
+cp backend/.env.example backend/.env
+```
+*Not: Bu senaryoda `DATABASE_URL` ve `REDIS_URL` adreslerinde `postgres` yerine `localhost` kullanılır.*
+
+### 3. Frontend İzole Geliştirme Dosyası (`frontend/.env.local`)
+Docker olmadan yerel Node.js ortamında (`npm run dev`) Next.js çalıştırmak isterseniz:
+```bash
+cp frontend/.env.example frontend/.env.local
+```
+
+---
+
+## 🛰️ Google Earth Engine (GEE) Service Account Yapılandırması
+
+Gerçek Sentinel-1 ve Sentinel-2 uydu verilerini çekebilmek için Google Cloud üzerinden bir **Service Account JSON Key** alınması gerekmektedir:
+
+### Adım Adım JSON Anahtarı Alma:
+1. **Google Cloud Console:** [console.cloud.google.com](https://console.cloud.google.com/) adresine gidin ve projenizi seçin.
+2. **API Etkinleştirme:** **APIs & Services $\rightarrow$ Library** menüsünden *"Google Earth Engine API"* aratıp **Enable (Etkinleştir)** butonuna basın.
+3. **Service Account Oluşturma:** **IAM & Admin $\rightarrow$ Service Accounts** menüsünden **"+ Create Service Account"** butonuna tıklayın, bir isim verin (örn: `gee-analyst`) ve tamamlayın.
+4. **JSON Key İndirme:** Oluşturulan hesabın üzerine tıklayın, **"Keys (Anahtarlar)"** sekmesine gelin, **"Add Key $\rightarrow$ Create new key $\rightarrow$ JSON"** seçerek dosyayı indirin.
+5. **Projeye Ekleme:** İndirilen dosyayı şu konuma yerleştirin:
+   ```
+   backend/secrets/gee-service-account.json
+   ```
+
+> 💡 **Otomatik Mock Desteği:** Eğer bir GEE anahtarı eklenmezse veya internet erişimi kısıtlıysa, platform otomatik olarak simüle edilmiş sentinel raster üretici fallback mekanizmasına geçerek analizlerin kesintisiz çalışmasını sağlar.
+
+---
+
 ## 🚀 Hızlı Başlangıç (Kurulum)
 
 ### 1. Gereksinimler
@@ -91,6 +154,9 @@ matematiksel olarak birleştirerek saniyeler içerisinde resmi onaylı hasar rap
 ```bash
 git clone https://github.com/HasanBasriTaskin/Agricultural-Area-Damage-Analysis.git
 cd Agricultural-Area-Damage-Analysis
+
+# Ortam değişkenlerini hazırlayın
+cp .env.example .env
 
 # Tüm servisleri derleyip arka planda başlatın
 docker compose up --build -d
@@ -150,12 +216,14 @@ docker compose exec -e PYTHONPATH=. api pytest tests/
 │   │   ├── core/              # config.py, security.py (Bcrypt, JWT)
 │   │   ├── domain/            # Entities, Value Objects, Scoring Protocols
 │   │   └── infrastructure/    # GEE client, OpenMeteo client, Celery tasks, PostGIS DB
+│   ├── secrets/               # gee-service-account.json (Opsiyonel GEE Anahtarı)
 │   └── tests/                 # test_e2e_full.py, test_sprint9.py, test_sprint8.py
 ├── frontend/
 │   ├── src/
 │   │   ├── app/               # /, /jobs, /login, /admin/users, /admin/jobs
 │   │   └── components/        # Map (Leaflet), Sidebar, TimeSeriesChart, ExportModal, ThemeToggle
 ├── docker-compose.yml         # 8 microservice orchestrator
+├── .env.example               # Ana ortam değişkenleri şablonu
 └── req.md                     # Teknik şartname ve mimari kararlar
 ```
 
