@@ -105,16 +105,9 @@ class GEESatelliteClient(ISatelliteDataClient):
         # Apply mask and median mosaic
         image = collection.map(apply_scl_mask).median().clip(roi)
         
-        # Resample 20m bands to 10m
+        # Select 10m and 20m bands from masked composite
         b10m = image.select(['B2', 'B3', 'B4', 'B8'])
-        # Get the projection of a native 10m band
-        proj10m = collection.first().select('B2').projection()
-        
-        b20m = image.select(['B5', 'B8A', 'B11']).resample('bilinear').reproject(
-            crs=proj10m,
-            scale=10
-        )
-        
+        b20m = image.select(['B5', 'B8A', 'B11'])
         ms_image = ee.Image.cat([b10m, b20m])
         
         # Faz 0: Apply Agriculture Mask
