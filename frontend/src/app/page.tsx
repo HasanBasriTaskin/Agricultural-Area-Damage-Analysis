@@ -132,6 +132,11 @@ export default function HomePage() {
             setSarStatus(jData.sar_status || "done");
             setMsStatus(jData.ms_status || "done");
             setWeatherStatus(jData.weather_status || "done");
+            if (jData.status === "failed") {
+              setErrorMessage(jData.error_message || "Analiz sırasında bir hata meydana geldi.");
+            } else {
+              setErrorMessage(null);
+            }
           }
         }).catch(err => console.error("Job meta fetch error:", err));
 
@@ -480,6 +485,29 @@ export default function HomePage() {
                 <PipelineRow label="Sentinel-1 SAR Radar" status={sarStatus} />
                 <PipelineRow label="Sentinel-2 Optik (MS)" status={msStatus} />
                 <PipelineRow label="ERA5 & Open-Meteo" status={weatherStatus} />
+
+                {/* Hata Alındığında Gösterilen Detaylı Hata Kartı */}
+                {jobStatus === "failed" && (
+                  <div className="mt-3 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-700 dark:text-red-400 text-xs space-y-2 animate-in fade-in duration-300">
+                    <div className="flex items-center gap-1.5 font-bold text-red-600 dark:text-red-300">
+                      <span>⚠️</span>
+                      <span>Analiz Hatası Tespit Edildi</span>
+                    </div>
+                    <p className="text-[11px] leading-relaxed break-words bg-red-950/20 dark:bg-black/40 p-2 rounded border border-red-500/20 font-mono text-zinc-800 dark:text-zinc-300 max-h-32 overflow-y-auto">
+                      {errorMessage || "Uydu verileri işlenirken veya birleştirilirken beklenmeyen bir hata oluştu."}
+                    </p>
+                    <div className="flex items-center justify-between pt-1 text-[11px]">
+                      <span className="text-zinc-500 dark:text-zinc-400">Tekrar denemek için parametreleri güncelleyebilirsiniz.</span>
+                      <button
+                        onClick={handleSave}
+                        disabled={isSaving || !wkt}
+                        className="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white rounded font-medium transition cursor-pointer shadow text-[11px]"
+                      >
+                        Yeniden Dene
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

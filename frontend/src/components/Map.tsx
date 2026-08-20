@@ -189,6 +189,33 @@ export default function MapComponent({
         }
     };
 
+    const handleUndo = () => {
+        if (points.length === 0) return;
+        const newPoints = points.slice(0, -1);
+        setPoints(newPoints);
+
+        if (newPoints.length >= 3) {
+            const ha = calcAreaHa(newPoints);
+            onPolygonChange(coordsToWkt(newPoints), ha);
+        } else {
+            onPolygonChange(null, 0);
+        }
+    };
+
+    // Keyboard shortcut (Ctrl+Z / Cmd+Z) for Undo while drawing
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+                if (points.length > 0) {
+                    e.preventDefault();
+                    handleUndo();
+                }
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [points]);
+
     const handleStartDrawing = () => {
         setIsDrawing(true);
         setPoints([]);
@@ -267,12 +294,22 @@ export default function MapComponent({
                     </div>
                 )}
                 {points.length > 0 && (
-                    <button
-                        onClick={handleClear}
-                        className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-lg transition-colors shadow cursor-pointer flex items-center justify-center gap-1"
-                    >
-                        <span>🗑️</span> Temizle
-                    </button>
+                    <div className="flex gap-1.5">
+                        <button
+                            onClick={handleUndo}
+                            className="flex-1 px-2.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-lg transition-colors shadow cursor-pointer flex items-center justify-center gap-1"
+                            title="Son eklenen noktayı geri al (Ctrl+Z)"
+                        >
+                            <span>↩️</span> Geri Al
+                        </button>
+                        <button
+                            onClick={handleClear}
+                            className="flex-1 px-2.5 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-lg transition-colors shadow cursor-pointer flex items-center justify-center gap-1"
+                            title="Çizimi tamamen temizle"
+                        >
+                            <span>🗑️</span> Temizle
+                        </button>
+                    </div>
                 )}
 
                 {/* Live area feedback */}

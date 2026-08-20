@@ -138,7 +138,13 @@ class GEESatelliteClient(ISatelliteDataClient):
         scale_steps = [scale, max(scale, 15), max(scale, 20), max(scale, 30), max(scale, 45), 60]
         unique_scales = list(dict.fromkeys(scale_steps))
 
+        import requests
+        import uuid
+        import os
+        from app.infrastructure.external.minio_client import MinioStorageClient
+
         last_err = None
+        response_content = None
         for s in unique_scales:
             try:
                 url = image.getDownloadURL({
@@ -147,28 +153,32 @@ class GEESatelliteClient(ISatelliteDataClient):
                     'format': 'GEO_TIFF'
                 })
                 if url:
-                    attempt_scale = s
-                    break
+                    resp = requests.get(url, timeout=120)
+                    if resp.status_code == 200:
+                        response_content = resp.content
+                        attempt_scale = s
+                        break
+                    elif resp.status_code == 400:
+                        err_text = resp.text.lower()
+                        last_err = RuntimeError(f"GEE download HTTP 400 at scale {s}m: {resp.text}")
+                        if "request size" in err_text or "must be less than" in err_text or "too large" in err_text or "pixel" in err_text:
+                            continue
+                        else:
+                            resp.raise_for_status()
+                    else:
+                        resp.raise_for_status()
             except Exception as e:
                 err_msg = str(e).lower()
                 last_err = e
-                if "request size" in err_msg or "must be less than" in err_msg or "too large" in err_msg or "pixel" in err_msg:
+                if "request size" in err_msg or "must be less than" in err_msg or "too large" in err_msg or "pixel" in err_msg or "400" in err_msg:
                     continue
                 else:
                     raise e
 
-        if not url:
+        if response_content is None:
             if last_err:
                 raise last_err
             raise RuntimeError("Failed to obtain download URL from Earth Engine.")
-        
-        import requests
-        import uuid
-        import os
-        from app.infrastructure.external.minio_client import MinioStorageClient
-        
-        response = requests.get(url, timeout=120)
-        response.raise_for_status()
         
         os.makedirs('temp_downloads', exist_ok=True)
         unique_id = uuid.uuid4()
@@ -176,7 +186,7 @@ class GEESatelliteClient(ISatelliteDataClient):
         object_name = f"rasters/{prefix}_{unique_id}.tif"
         
         with open(filename, 'wb') as f:
-            f.write(response.content)
+            f.write(response_content)
             
         # Upload to MinIO
         try:
