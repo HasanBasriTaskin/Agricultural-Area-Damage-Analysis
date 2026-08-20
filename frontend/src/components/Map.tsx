@@ -3,6 +3,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { MapContainer, TileLayer, Polygon, Marker, Tooltip, useMapEvents, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import { insertPointIntoPolygon } from '@/lib/polygonUtils';
 
 const vertexIcon = L.divIcon({
     className: 'bg-white border-[3px] border-red-500 rounded-full shadow-md cursor-grab active:cursor-grabbing',
@@ -177,7 +178,7 @@ export default function MapComponent({
     }, [isAnalyzing]);
 
     const handleMapClick = (lat: number, lng: number) => {
-        const newPoints: [number, number][] = [...points, [lat, lng]];
+        const newPoints = insertPointIntoPolygon(points, [lat, lng]);
         setPoints(newPoints);
 
         if (newPoints.length >= 3) {
